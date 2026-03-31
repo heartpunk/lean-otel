@@ -71,6 +71,34 @@ open LeanOtel
 
 -- JSON key presence verified by Honeycomb 200 in integration test
 
+/-! ## BatchAccum pure logic -/
+
+section BatchAccumTests
+open LeanOtel
+
+#guard
+  let acc := BatchAccum.empty 3
+  let span : Span := ⟨"t", "s", none, "n", 0, 1, #[], .unset⟩
+  let (acc1, exp1) := BatchAccum.add acc span
+  let (acc2, exp2) := BatchAccum.add acc1 span
+  let (_, exp3) := BatchAccum.add acc2 span
+  !exp1 && !exp2 && exp3
+
+#guard
+  let acc := BatchAccum.empty 10
+  let span : Span := ⟨"t", "s", none, "n", 0, 1, #[], .unset⟩
+  let (acc1, _) := BatchAccum.add acc span
+  let (acc2, _) := BatchAccum.add acc1 span
+  let (batch, acc3) := BatchAccum.take acc2
+  batch.size == 2 && acc3.batch.size == 0 && acc3.totalExported == 2
+
+#guard
+  let acc := BatchAccum.empty 10
+  let acc' := BatchAccum.recordDropped acc 5
+  acc'.totalDropped == 5
+
+end BatchAccumTests
+
 /-! ## IO tests -/
 
 def testSpan : Span := {
@@ -148,6 +176,63 @@ def testHoneycombIntegration : IO Unit := do
   assert "Honeycomb returns 200" (result.statusCode == 200)
   assert "no error" result.error.isNone
 
+open LeanOtel in
+def testAsyncProcessor : IO Unit := do
+  IO.println "Async processor:"
+  let ap ← AsyncProcessor.new {
+    apiKey := "zoFbjFUA5ErGjhw9T2CtWC"
+    maxQueueSize := 100
+    maxExportBatchSize := 5
+    scheduledDelayMs := 500
+    resource := { serviceName := "lean-otel-test" }
+  }
+
+  -- Send 7 spans — should trigger one batch export at 5
+  for i in List.range 7 do
+    let span : Span := {
+      traceId := "aaaa0000bbbb1111cccc2222dddd3333"
+      spanId := "eeee4444ffff5555"
+      name := s!"async-test-span-{i}"
+      startTimeUnixNano := 1000000000
+      endTimeUnixNano := 2000000000
+      attributes := #[⟨"index", .int i⟩]
+    }
+    let ok ← ap.send span
+    assert s!"send span {i}" ok
+
+  -- Wait for timer to fire and export remaining 2
+  IO.sleep 1000
+
+  -- Shutdown — should drain anything left
+  ap.shutdown
+
+  let stats ← ap.getStats
+  assert "all 7 exported" (stats.totalExported == 7)
+  assert "none dropped" (stats.totalDropped == 0)
+  assert "batch empty after shutdown" (stats.batch.isEmpty)
+
+open LeanOtel in
+def testAsyncShutdownRejects : IO Unit := do
+  IO.println "Async shutdown rejects:"
+  let ap ← AsyncProcessor.new {
+    apiKey := "zoFbjFUA5ErGjhw9T2CtWC"
+    maxQueueSize := 100
+    maxExportBatchSize := 100
+    scheduledDelayMs := 60000
+    resource := { serviceName := "lean-otel-test" }
+  }
+
+  -- Send one span
+  let ok ← ap.send testSpan
+  assert "send before shutdown accepted" ok
+
+  -- Shutdown
+  ap.shutdown
+
+  -- Send after shutdown should be rejected
+  let ok2 ← ap.send testSpan
+  assert "send after shutdown rejected" (!ok2)
+
 def main : IO UInt32 := do
   IO.println "lean-otel test suite"
   IO.println "==================="
@@ -155,6 +240,8 @@ def main : IO UInt32 := do
     testQueueOps
     testIdGeneration
     testHoneycombIntegration
+    testAsyncProcessor
+    testAsyncShutdownRejects
     IO.println "\nAll tests passed!"
     return 0
   catch e =>
