@@ -2,9 +2,15 @@ name = "lean-otel"
 version = "0.1.0"
 defaultTargets = ["lean-otel"]
 
+[[require]]
+name = "Curl"
+git = "https://github.com/bergmannjg/leanCurl"
+rev = "main"
+
 [[lean_lib]]
 name = "LeanOtel"
 
 [[lean_exe]]
 name = "lean-otel"
 root = "Main"
+moreLinkArgs = ["/opt/homebrew/opt/curl/lib/libcurl.dylib"]

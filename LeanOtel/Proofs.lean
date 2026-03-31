@@ -3,12 +3,9 @@
 -/
 import LeanOtel.Span
 import LeanOtel.Json
+import LeanOtel.Trace
 
 namespace LeanOtel
-
-/-- The hex digit function used in ID generation. Extracted for proving. -/
-def hexDigit (n : Nat) : Char :=
-  if n < 10 then Char.ofNat (48 + n) else Char.ofNat (87 + n)
 
 /-- hexDigit with input in range [0,15] produces a valid ASCII hex char code.
     '0'-'9' = 48-57, 'a'-'f' = 97-102. -/

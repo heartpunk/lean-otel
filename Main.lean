@@ -3,31 +3,30 @@ import LeanOtel
 open LeanOtel
 
 def main : IO Unit := do
-  let config : ExporterConfig := {
+  let config : BatchConfig := {
     apiKey := "zoFbjFUA5ErGjhw9T2CtWC"
+    maxExportBatchSize := 10
+    scheduledDelayMs := 1000
     resource := { serviceName := "lean-otel-test" }
   }
-  let ctx ← TracerContext.new config
+  let tracer ← Tracer.new config
 
-  ctx.withSpan "integration-test" (attrs := #[⟨"test.source", .str "lean-otel Main.lean"⟩]) fun ctx => do
+  tracer.withSpan "integration-test" (attrs := #[⟨"test.source", .str "lean-otel async"⟩]) fun t => do
     IO.println "inside test span..."
 
-    ctx.withSpan "child-span" (attrs := #[⟨"child.index", .int 1⟩]) fun _ => do
+    t.withSpan "child-span" (attrs := #[⟨"child.index", .int 1⟩]) fun _ => do
       IO.println "inside child span..."
-      IO.sleep 100
-
-    ctx.withSpan "another-child" (attrs := #[⟨"child.index", .int 2⟩]) fun _ => do
-      IO.println "inside another child..."
       IO.sleep 50
 
-  -- Dump JSON for debugging
-  let spans ← ctx.pendingSpans.get
-  let json := LeanOtel.mkTraceExportRequest config.resource spans
-  IO.println s!"JSON: {json.compress}"
+    t.withSpan "another-child" (attrs := #[⟨"child.index", .int 2⟩]) fun _ => do
+      IO.println "inside another child..."
+      IO.sleep 30
 
-  let code ← ctx.flush
-  IO.println s!"export status: {code}"
-  if code == 200 then
-    IO.println "SUCCESS: Honeycomb accepted our traces!"
-  else
-    IO.println s!"FAILED: got HTTP {code}"
+  let (queued, dropped) ← tracer.stats
+  IO.println s!"before flush: queued={queued}, dropped={dropped}"
+
+  tracer.flush
+
+  let (queued2, _) ← tracer.stats
+  IO.println s!"after flush: queued={queued2}"
+  IO.println "done"
