@@ -18,7 +18,7 @@ deriving Repr
 private def curlArgs (config : ExporterConfig) (jsonStr : String) : Array String :=
   let url := s!"{config.endpoint}/v1/traces"
   let base : Array String := #[
-    "-s", "-o", "/dev/null", "-w", "%{http_code}",
+    "-s", "-w", "\n%{http_code}",
     "-X", "POST",
     url,
     "-H", "Content-Type: application/json",
@@ -36,11 +36,14 @@ def exportSpans (config : ExporterConfig) (spans : Array Span) : IO UInt32 := do
   let jsonStr := json.compress
   let args := curlArgs config jsonStr
   let out ← IO.Process.output { cmd := "curl", args := args }
-  let trimmed := out.stdout.trimRight
-  match trimmed.toNat? with
+  let lines := out.stdout.splitOn "\n"
+  let body := lines.dropLast.foldl (· ++ · ++ "\n") ""
+  let statusLine := lines.getLast!
+  IO.eprintln s!"lean-otel: response body: {body}"
+  match statusLine.toNat? with
   | some code => return (code % 1000).toUInt32
   | none =>
-    IO.eprintln s!"lean-otel: failed to parse HTTP status from curl output: '{trimmed}'"
+    IO.eprintln s!"lean-otel: failed to parse HTTP status from curl output: '{statusLine}'"
     IO.eprintln s!"lean-otel: curl stderr: {out.stderr}"
     return 999
 

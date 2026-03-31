@@ -31,7 +31,7 @@ def Span.toOtlpJson (s : Span) : Json :=
     ("startTimeUnixNano", Json.str (toString s.startTimeUnixNano)),
     ("endTimeUnixNano", Json.str (toString s.endTimeUnixNano)),
     ("attributes", Json.arr (s.attributes.map attributeToJson)),
-    ("status", Json.mkObj [("code", Json.str (toString (statusCodeToInt s.status)))])
+    ("status", Json.mkObj [("code", Json.num (Lean.JsonNumber.fromNat (statusCodeToInt s.status)))])
   ]
   let withParent := match s.parentSpanId with
     | some pid => ("parentSpanId", Json.str pid) :: fields

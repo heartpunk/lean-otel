@@ -25,13 +25,16 @@ def newTraceId : IO String := randomHex 16
 /-- Generate a span ID (8 bytes = 16 hex chars). -/
 def newSpanId : IO String := randomHex 8
 
-/-- Get current time in nanoseconds since epoch. -/
+/-- Get current wall clock time in nanoseconds since Unix epoch.
+    Uses `date +%s%N` for nanosecond precision. -/
 def nowNanos : IO UInt64 := do
-  let ms ← IO.monoMsNow
-  -- IO.monoMsNow is monotonic milliseconds; convert to nanos
-  -- Note: this is monotonic, not wall clock. For proper timestamps
-  -- we'd need clock_gettime. Monotonic is fine for durations.
-  return ms.toUInt64 * 1000000
+  let out ← IO.Process.output { cmd := "date", args := #["+%s%N"] }
+  match out.stdout.trim.toNat? with
+  | some n => return n.toUInt64
+  | none =>
+    IO.eprintln s!"lean-otel: failed to get wall clock time, falling back to monotonic"
+    let ms ← IO.monoMsNow
+    return ms.toUInt64 * 1000000
 
 /-- Tracer context: holds current trace/span IDs and the exporter config. -/
 structure TracerContext where
