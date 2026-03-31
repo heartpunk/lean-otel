@@ -14,3 +14,8 @@ name = "LeanOtel"
 name = "lean-otel"
 root = "Main"
 moreLinkArgs = ["/opt/homebrew/opt/curl/lib/libcurl.dylib"]
+
+[[lean_exe]]
+name = "lean-otel-test"
+root = "Test"
+moreLinkArgs = ["/opt/homebrew/opt/curl/lib/libcurl.dylib"]
