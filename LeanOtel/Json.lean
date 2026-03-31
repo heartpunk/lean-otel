@@ -18,7 +18,7 @@ private def attrValueToJson : AttrValue → Json
 private def attributeToJson (a : Attribute) : Json :=
   Json.mkObj [("key", Json.str a.key), ("value", attrValueToJson a.value)]
 
-private def statusCodeToInt : StatusCode → Nat
+def statusCodeToInt : StatusCode → Nat
   | .unset => 0
   | .ok => 1
   | .error => 2
