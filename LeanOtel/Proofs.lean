@@ -21,4 +21,25 @@ theorem statusCodeToInt_bounded (s : StatusCode) :
     statusCodeToInt s < 3 := by
   cases s <;> simp [statusCodeToInt]
 
+/-- foldl of 2-char appends preserves the invariant: length = init.length + 2 * list.length -/
+theorem foldl_append_two_length (init : List Char) :
+    ∀ (pairs : List (Char × Char)),
+      (pairs.foldl (fun acc (p : Char × Char) => acc ++ [p.1, p.2]) init).length
+      = init.length + 2 * pairs.length := by
+  intro pairs
+  induction pairs generalizing init with
+  | nil => simp
+  | cons p ps ih =>
+    simp only [List.foldl]
+    have := ih (init ++ [p.1, p.2])
+    simp [List.length_append] at this ⊢
+    omega
+
+/-- randomHex n produces exactly 2*n characters (stated over the pure fold). -/
+theorem randomHex_length (pairs : List (Char × Char)) :
+    (pairs.foldl (fun acc (p : Char × Char) => acc ++ [p.1, p.2]) []).length
+    = 2 * pairs.length := by
+  rw [foldl_append_two_length]
+  simp
+
 end LeanOtel
