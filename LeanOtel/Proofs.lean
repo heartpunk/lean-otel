@@ -4,6 +4,7 @@
 import LeanOtel.Span
 import LeanOtel.Json
 import LeanOtel.Trace
+import LeanOtel.BatchProcessor
 
 namespace LeanOtel
 
@@ -65,28 +66,53 @@ theorem mkTraceExportRequest_isObj (r : Resource) (spans : Array Span) :
     Json.isObj (mkTraceExportRequest r spans) := by
   simp [mkTraceExportRequest, Json.mkObj, Json.isObj]
 
-/-- Pure enqueue: if queue is under max, push succeeds and size increases by 1. -/
-theorem enqueue_under_max (queue : Array α) (x : α) (max : Nat) (h : queue.size < max) :
-    (queue.push x).size = queue.size + 1 := by
-  simp [Array.size_push]
+/-- BatchState.enqueue: if queue was bounded, it stays bounded. -/
+theorem enqueue_bounded (st : BatchState) (span : Span) (max : Nat)
+    (h_pre : st.queue.size ≤ max) :
+    (st.enqueue span max).1.queue.size ≤ max := by
+  unfold BatchState.enqueue
+  if h : st.queue.size ≥ max then
+    simp [if_pos h]; exact h_pre
+  else
+    simp [if_neg h, Array.size_push]; omega
 
-/-- Pure enqueue: queue never exceeds maxQueueSize. -/
-theorem enqueue_bounded (queue : Array α) (x : α) (max : Nat) (h : queue.size < max) :
-    (queue.push x).size ≤ max := by
-  simp [Array.size_push]; omega
+/-- BatchState.enqueue: if accepted, queue grew by 1. -/
+theorem enqueue_accepted_grows (st : BatchState) (span : Span) (max : Nat)
+    (h : (st.enqueue span max).2 = true) :
+    (st.enqueue span max).1.queue.size = st.queue.size + 1 := by
+  unfold BatchState.enqueue at h ⊢
+  if hq : st.queue.size ≥ max then
+    simp [hq] at h
+  else
+    simp [hq, Array.size_push]
 
-/-- Pure drain: extract returns at most maxBatchSize elements. -/
-theorem drain_bounded (queue : Array α) (maxBatch : Nat) :
-    (queue.extract 0 (min queue.size maxBatch)).size ≤ maxBatch := by
-  simp [Array.size_extract]
+/-- BatchState.enqueue: if rejected, queue size unchanged and dropped incremented. -/
+theorem enqueue_rejected_unchanged (st : BatchState) (span : Span) (max : Nat)
+    (h : (st.enqueue span max).2 = false) :
+    (st.enqueue span max).1.queue.size = st.queue.size ∧
+    (st.enqueue span max).1.dropped = st.dropped + 1 := by
+  unfold BatchState.enqueue at h ⊢
+  if hq : st.queue.size ≥ max then
+    simp [hq]
+  else
+    simp [hq] at h
+
+/-- BatchState.drain: batch size is at most maxBatchSize. -/
+theorem drain_batch_bounded (st : BatchState) (maxBatch : Nat) :
+    (st.drain maxBatch).1.size ≤ maxBatch := by
+  simp [BatchState.drain, Array.size_extract]
   omega
 
-/-- Pure drain: extract + remaining preserves total count. -/
-theorem drain_preserves_total (queue : Array α) (maxBatch : Nat) :
-    let batchSize := min queue.size maxBatch
-    (queue.extract 0 batchSize).size + (queue.extract batchSize queue.size).size = queue.size := by
-  simp [Array.size_extract]
+/-- BatchState.drain: batch + remaining = original queue size. -/
+theorem drain_preserves_total (st : BatchState) (maxBatch : Nat) :
+    (st.drain maxBatch).1.size + (st.drain maxBatch).2.queue.size = st.queue.size := by
+  simp [BatchState.drain, Array.size_extract]
   omega
+
+/-- BatchState.drain: dropped count unchanged. -/
+theorem drain_preserves_dropped (st : BatchState) (maxBatch : Nat) :
+    (st.drain maxBatch).2.dropped = st.dropped := by
+  simp [BatchState.drain]
 
 /-- statusCodeToInt maps to exact OTLP spec values. -/
 theorem statusCode_unset : statusCodeToInt .unset = 0 := rfl

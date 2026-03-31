@@ -28,6 +28,24 @@ structure BatchState where
   dropped : Nat
 deriving Repr
 
+/-! ## Pure queue operations — proved in Proofs.lean -/
+
+/-- Pure enqueue: try to add a span to the queue. Returns (new state, accepted). -/
+def BatchState.enqueue (st : BatchState) (span : Span) (maxQueueSize : Nat) : BatchState × Bool :=
+  if st.queue.size ≥ maxQueueSize then
+    ({ st with dropped := st.dropped + 1 }, false)
+  else
+    ({ st with queue := st.queue.push span }, true)
+
+/-- Pure drain: take up to maxBatchSize spans from front. Returns (batch, remaining state). -/
+def BatchState.drain (st : BatchState) (maxBatchSize : Nat) : Array Span × BatchState :=
+  let batchSize := min st.queue.size maxBatchSize
+  let batch := st.queue.extract 0 batchSize
+  let remaining := st.queue.extract batchSize st.queue.size
+  (batch, { st with queue := remaining })
+
+/-! ## IO wrappers — thin shells over the pure operations -/
+
 /-- Thread-safe batch processor handle. Uses IO.Ref for lock-free atomic ops. -/
 structure BatchProcessor where
   config : BatchConfig
@@ -45,20 +63,15 @@ def BatchProcessor.new (config : BatchConfig) : IO BatchProcessor := do
 /-- Enqueue a span. Non-blocking. Drops the span if queue is full. -/
 def BatchProcessor.enqueue (bp : BatchProcessor) (span : Span) : IO Bool := do
   let st ← bp.state.get
-  if st.queue.size ≥ bp.config.maxQueueSize then
-    bp.state.modify fun st => { st with dropped := st.dropped + 1 }
-    return false
-  else
-    bp.state.modify fun st => { st with queue := st.queue.push span }
-    return true
+  let (st', accepted) := st.enqueue span bp.config.maxQueueSize
+  bp.state.set st'
+  return accepted
 
 /-- Drain up to maxExportBatchSize spans from the queue. -/
 def BatchProcessor.drain (bp : BatchProcessor) : IO (Array Span) := do
   let st ← bp.state.get
-  let batchSize := min st.queue.size bp.config.maxExportBatchSize
-  let batch := st.queue.extract 0 batchSize
-  let remaining := st.queue.extract batchSize st.queue.size
-  bp.state.set { st with queue := remaining }
+  let (batch, st') := st.drain bp.config.maxExportBatchSize
+  bp.state.set st'
   return batch
 
 /-- Ship a batch of spans to the endpoint via libcurl. -/
