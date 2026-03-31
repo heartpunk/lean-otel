@@ -65,4 +65,32 @@ theorem mkTraceExportRequest_isObj (r : Resource) (spans : Array Span) :
     Json.isObj (mkTraceExportRequest r spans) := by
   simp [mkTraceExportRequest, Json.mkObj, Json.isObj]
 
+/-- Pure enqueue: if queue is under max, push succeeds and size increases by 1. -/
+theorem enqueue_under_max (queue : Array α) (x : α) (max : Nat) (h : queue.size < max) :
+    (queue.push x).size = queue.size + 1 := by
+  simp [Array.size_push]
+
+/-- Pure enqueue: queue never exceeds maxQueueSize. -/
+theorem enqueue_bounded (queue : Array α) (x : α) (max : Nat) (h : queue.size < max) :
+    (queue.push x).size ≤ max := by
+  simp [Array.size_push]; omega
+
+/-- Pure drain: extract returns at most maxBatchSize elements. -/
+theorem drain_bounded (queue : Array α) (maxBatch : Nat) :
+    (queue.extract 0 (min queue.size maxBatch)).size ≤ maxBatch := by
+  simp [Array.size_extract]
+  omega
+
+/-- Pure drain: extract + remaining preserves total count. -/
+theorem drain_preserves_total (queue : Array α) (maxBatch : Nat) :
+    let batchSize := min queue.size maxBatch
+    (queue.extract 0 batchSize).size + (queue.extract batchSize queue.size).size = queue.size := by
+  simp [Array.size_extract]
+  omega
+
+/-- statusCodeToInt maps to exact OTLP spec values. -/
+theorem statusCode_unset : statusCodeToInt .unset = 0 := rfl
+theorem statusCode_ok : statusCodeToInt .ok = 1 := rfl
+theorem statusCode_error : statusCodeToInt .error = 2 := rfl
+
 end LeanOtel
