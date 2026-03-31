@@ -42,4 +42,30 @@ theorem randomHex_length (pairs : List (Char × Char)) :
   rw [foldl_append_two_length]
   simp
 
+open Lean
+
+/-- Predicate: a Json value is an object. -/
+def Json.isObj : Json → Prop
+  | .obj _ => True
+  | _ => False
+
+instance : Decidable (Json.isObj j) := by
+  cases j <;> simp [Json.isObj] <;> exact inferInstance
+
+/-- Span.toOtlpJson always produces a JSON object. -/
+theorem span_toOtlpJson_isObj (s : Span) :
+    Json.isObj s.toOtlpJson := by
+  unfold Span.toOtlpJson
+  cases s.parentSpanId <;> simp [Json.mkObj, Json.isObj]
+
+/-- Resource.toOtlpJson always produces a JSON object. -/
+theorem resource_toOtlpJson_isObj (r : Resource) :
+    Json.isObj r.toOtlpJson := by
+  simp [Resource.toOtlpJson, Json.mkObj, Json.isObj]
+
+/-- mkTraceExportRequest always produces a JSON object. -/
+theorem mkTraceExportRequest_isObj (r : Resource) (spans : Array Span) :
+    Json.isObj (mkTraceExportRequest r spans) := by
+  simp [mkTraceExportRequest, Json.mkObj, Json.isObj]
+
 end LeanOtel
