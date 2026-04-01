@@ -177,6 +177,25 @@ def testExportEmpty : IO Unit := do
   assert "empty export no error" result.error.isNone
   assert "empty export empty body" (result.responseBody == "")
 
+def testExportToFile : IO Unit := do
+  IO.println "Export to file:"
+  let path : System.FilePath := "/tmp/lean-otel-test-traces.jsonl"
+  -- Clean up from prior runs
+  try IO.FS.removeFile path catch | _ => pure ()
+  let resource : Resource := { serviceName := "file-test" }
+  exportSpansToFile path resource #[testSpan]
+  let contents ← IO.FS.readFile path
+  assert "file not empty" (!contents.isEmpty)
+  -- Should be valid JSON (contains resourceSpans key)
+  assert "contains resourceSpans" ((contents.splitOn "resourceSpans").length > 1)
+  assert "contains test-span" ((contents.splitOn "test-span").length > 1)
+  -- Write a second batch
+  exportSpansToFile path resource #[testSpan]
+  let contents2 ← IO.FS.readFile path
+  assert "file grew (append)" (contents2.length > contents.length)
+  -- Clean up
+  IO.FS.removeFile path
+
 def testHoneycombIntegration : IO Unit := do
   IO.println "Honeycomb integration:"
   let config : ExporterConfig := {
@@ -251,6 +270,7 @@ def main : IO UInt32 := do
     testQueueOps
     testIdGeneration
     testExportEmpty
+    testExportToFile
     testHoneycombIntegration
     testAsyncProcessor
     testAsyncShutdownRejects
