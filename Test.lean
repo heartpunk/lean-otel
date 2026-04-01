@@ -198,14 +198,40 @@ def testExportToFile : IO Unit := do
 
 def testExportBadEndpoint : IO Unit := do
   IO.println "Export bad endpoint:"
+  let logPath : System.FilePath := "/tmp/lean-otel-test-transport.log"
+  try IO.FS.removeFile logPath catch | _ => pure ()
   let config : ExporterConfig := {
-    endpoint := "https://localhost:1"  -- nothing listening
+    endpoint := "https://localhost:1"
     apiKey := "fake"
     resource := { serviceName := "test" }
+    logSink := fileLogSink logPath
   }
   let result ← exportSpans config #[testSpan]
   assert "bad endpoint has error" result.error.isSome
   assert "bad endpoint status 0" (result.statusCode == 0)
+  let logContent ← IO.FS.readFile logPath
+  assert "transport error logged" ((logContent.splitOn "export failed").length > 1)
+  IO.FS.removeFile logPath
+
+def testBadCredentials : IO Unit := do
+  IO.println "Bad credentials:"
+  let logPath : System.FilePath := "/tmp/lean-otel-test-auth.log"
+  try IO.FS.removeFile logPath catch | _ => pure ()
+  let config : ExporterConfig := {
+    apiKey := "invalid-key-should-get-401"
+    resource := { serviceName := "lean-otel-test" }
+    logSink := fileLogSink logPath
+  }
+  let result ← exportSpans config #[testSpan]
+  assert "bad key returns 401" (result.statusCode == 401)
+  assert "bad key no transport error" result.error.isNone
+  assert "response body non-empty on 401" (!result.responseBody.isEmpty)
+  -- Verify the auth rejection was logged
+  let logContent ← IO.FS.readFile logPath
+  assert "log mentions authentication rejected" ((logContent.splitOn "authentication rejected").length > 1)
+  assert "log mentions 401" ((logContent.splitOn "401").length > 1)
+  assert "log mentions endpoint" ((logContent.splitOn "endpoint=").length > 1)
+  IO.FS.removeFile logPath
 
 def testHoneycombIntegration : IO Unit := do
   IO.println "Honeycomb integration:"
@@ -459,6 +485,7 @@ def main : IO UInt32 := do
     testExportEmpty
     testExportToFile
     testExportBadEndpoint
+    testBadCredentials
     testHoneycombIntegration
     testNowNanos
     testTracerWithSpan

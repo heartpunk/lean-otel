@@ -9,13 +9,24 @@ namespace LeanOtel
 
 open Curl
 
+/-- Log sink: where diagnostic messages go. Injectable for testing. -/
+def LogSink := String → IO Unit
+
+/-- Default log sink: stderr. -/
+def stderrLogSink : LogSink := IO.eprintln
+
+/-- File log sink: appends to a file. -/
+def fileLogSink (path : System.FilePath) : LogSink := fun msg => do
+  let h ← IO.FS.Handle.mk path .append
+  h.putStrLn msg
+
 /-- Configuration for the OTLP HTTP exporter. -/
 structure ExporterConfig where
   endpoint : String := "https://api.honeycomb.io"
   apiKey : String
   headers : Array (String × String) := #[]
   resource : Resource
-deriving Repr
+  logSink : LogSink := stderrLogSink
 
 /-- Result of an export attempt. -/
 structure ExportResult where
@@ -32,6 +43,7 @@ def exportSpans (config : ExporterConfig) (spans : Array Span) : IO ExportResult
   let json := mkTraceExportRequest config.resource spans
   let jsonStr := json.compress
   let url := s!"{config.endpoint}/v1/traces"
+  let log := config.logSink
 
   try
     let response ← IO.mkRef { : IO.FS.Stream.Buffer }
@@ -40,7 +52,6 @@ def exportSpans (config : ExporterConfig) (spans : Array Span) : IO ExportResult
     curl_set_option curl (CurlOption.VERBOSE 0)
     curl_set_option curl (CurlOption.COPYPOSTFIELDS jsonStr)
 
-    -- Build header list
     let mut hdrs : Array String := #[
       "Content-Type: application/json",
       s!"x-honeycomb-team: {config.apiKey}"
@@ -57,11 +68,16 @@ def exportSpans (config : ExporterConfig) (spans : Array Span) : IO ExportResult
 
     let bytes ← response.get
     let body := String.fromUTF8! bytes.data
+    if httpCode == 401 then
+      log s!"lean-otel: authentication rejected (HTTP 401). Check your API key."
+      log s!"lean-otel: endpoint={url} response={body}"
+    else if httpCode ≥ 400 then
+      log s!"lean-otel: export failed with HTTP {httpCode}: {body}"
     return { statusCode := httpCode, responseBody := body, error := none }
 
   catch e =>
     let msg := s!"lean-otel: export failed: {e}"
-    IO.eprintln msg
+    log msg
     return { statusCode := 0, responseBody := "", error := some msg }
 
 /-- File exporter: append spans as OTLP JSON lines to a file (for offline/archive). -/
