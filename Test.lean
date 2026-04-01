@@ -424,15 +424,30 @@ def testTracedDef : IO Unit := do
   let result ← tracedOuter
   assert "tracedOuter returns 10" (result == 10)
 
-  -- Check that spans were queued
+  -- Check that spans were queued with args
   match ← LeanOtel.getGlobalTracer with
   | some t =>
     let (queued, _) ← t.stats
-    -- tracedOuter + 2x tracedAdd = 3 spans
     assert "3 spans from traced defs" (queued == 3)
+    -- Drain and check attributes on tracedAdd spans
+    let batch ← t.processor.drain
+    -- First two spans are the tracedAdd calls (inner finishes first)
+    match batch[0]?, batch[1]? with
+    | some s0, some s1 =>
+      assert "tracedAdd span has attrs" (s0.attributes.size > 0)
+      -- Check that x and y args are captured
+      let hasX := s0.attributes.any (·.key == "x")
+      let hasY := s0.attributes.any (·.key == "y")
+      assert "tracedAdd captures arg x" hasX
+      assert "tracedAdd captures arg y" hasY
+      -- Check values
+      let xVal := s0.attributes.find? (·.key == "x")
+      match xVal with
+      | some ⟨_, .str v⟩ => assert "x value is '1'" (v == "1")
+      | _ => assert "x attr is string" false
+    | _, _ => assert "batch has 2 spans" false
   | none => assert "global tracer initialized" false
 
-  flushGlobalTracer
   stopGlobalTracer
 
 def main : IO UInt32 := do

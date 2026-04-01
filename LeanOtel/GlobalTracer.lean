@@ -48,11 +48,38 @@ def stopGlobalTracer : IO Unit := do
   | some t => t.stop
   | none => pure ()
 
+open Lean Syntax in
+/-- Extract explicit parameter names from an optDeclSig's binders. -/
+private def getExplicitParams (sig : TSyntax ``Parser.Command.optDeclSig) : Array Name :=
+  let args := sig.raw[0].getArgs
+  args.foldl (init := #[]) fun acc arg =>
+    if arg.getKind == ``Parser.Term.explicitBinder then
+      arg[1].getArgs.foldl (init := acc) fun acc2 id =>
+        if id.isIdent then acc2.push id.getId else acc2
+    else if arg.isIdent then
+      acc.push arg.getId
+    else acc
+
 open Lean in
-/-- `traced def f (args) : IO T := body` desugars to
-    `def f (args) : IO T := LeanOtel.withGlobalSpan "f" body` -/
-scoped macro "traced " "def " name:ident sig:optDeclSig " := " body:term : command =>
+private def mkAttrElems (paramNames : Array Name) : MacroM (Array (TSyntax `term)) :=
+  paramNames.mapM fun pn => do
+    let pnStr := Lean.quote (toString pn)
+    let pnIdent := mkIdent pn
+    `(⟨$pnStr, .str (toString $pnIdent)⟩)
+
+open Lean in
+/-- `traced def f (x : Nat) (y : String) : IO T := body` desugars to
+    `def f (x : Nat) (y : String) : IO T := withGlobalSpan "f"
+       (attrs := #[⟨"x", .str (toString x)⟩, ⟨"y", .str (toString y)⟩]) body`
+
+    All explicit parameters with `ToString` instances are captured as span attributes.
+    TODO: accept/reject list for which args to serialize
+    TODO: value munging function -/
+scoped macro "traced " "def " name:ident sig:optDeclSig " := " body:term : command => do
   let spanName := Lean.quote (toString name.getId)
-  `(def $name $sig := withGlobalSpan $spanName (attrs := #[]) ($body))
+  let paramNames := getExplicitParams sig
+  let attrElems ← mkAttrElems paramNames
+  let attrArray ← `(#[$[$attrElems],*])
+  `(def $name $sig := withGlobalSpan $spanName (attrs := $attrArray) ($body))
 
 end LeanOtel
