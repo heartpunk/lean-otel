@@ -1,11 +1,11 @@
 {"version": "1.1.0",
  "packagesDir": ".lake/packages",
  "packages":
- [{"url": "https://github.com/bergmannjg/leanCurl",
+ [{"url": "https://github.com/heartpunk/leanCurl",
    "type": "git",
    "subDir": null,
    "scope": "",
-   "rev": "d725fede14f67acc746c18eaec962f6461dee5cb",
+   "rev": "09cd3097c75bbe626147ca496bb6268e1a47ce93",
    "name": "Curl",
    "manifestFile": "lake-manifest.json",
    "inputRev": "main",

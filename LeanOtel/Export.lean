@@ -53,12 +53,11 @@ def exportSpans (config : ExporterConfig) (spans : Array Span) : IO ExportResult
     curl_set_option curl (CurlOption.WRITEFUNCTION Curl.writeBytes)
 
     curl_easy_perform curl
+    let httpCode ← curl_easy_getinfo_response_code curl
 
     let bytes ← response.get
     let body := String.fromUTF8! bytes.data
-    -- TODO: extract HTTP status code from curl (curl_easy_getinfo)
-    -- For now, if curl_easy_perform didn't throw, assume 200
-    return { statusCode := 200, responseBody := body, error := none }
+    return { statusCode := httpCode, responseBody := body, error := none }
 
   catch e =>
     let msg := s!"lean-otel: export failed: {e}"

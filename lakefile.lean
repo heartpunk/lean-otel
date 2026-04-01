@@ -10,7 +10,7 @@ def libcurlLink : String :=
 package «lean-otel» where
   version := v!"0.1.0"
 
-require Curl from git "https://github.com/bergmannjg/leanCurl"@"main"
+require Curl from git "https://github.com/heartpunk/leanCurl"@"main"
 
 @[default_target] lean_lib LeanOtel
 
