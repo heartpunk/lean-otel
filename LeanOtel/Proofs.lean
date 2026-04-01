@@ -145,4 +145,14 @@ theorem batchAccum_take_exports (acc : BatchAccum) :
     (acc.take).2.totalExported = acc.totalExported + acc.batch.size := by
   simp [BatchAccum.take]
 
+/-- BatchAccum.recordDropped: totalDropped increases by n. -/
+theorem batchAccum_recordDropped_increments (acc : BatchAccum) (n : Nat) :
+    (acc.recordDropped n).totalDropped = acc.totalDropped + n := by
+  simp [BatchAccum.recordDropped]
+
+/-- BatchAccum.recordDropped: batch unchanged. -/
+theorem batchAccum_recordDropped_preserves_batch (acc : BatchAccum) (n : Nat) :
+    (acc.recordDropped n).batch = acc.batch := by
+  simp [BatchAccum.recordDropped]
+
 end LeanOtel
