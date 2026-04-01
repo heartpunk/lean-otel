@@ -76,10 +76,11 @@ private def doExport (config : AsyncConfig) (spans : Array Span) : IO Bool := do
     resource := config.resource
   }
   let result ← exportSpans exportConfig spans
-  if result.error.isSome then
-    IO.eprintln s!"lean-otel: async export error: {result.error.get!}"
+  match result.error with
+  | some msg =>
+    IO.eprintln s!"lean-otel: async export error: {msg}"
     return false
-  return result.statusCode == 200
+  | none => return result.statusCode == 200
 
 /-- Worker loop: read from channel, batch, export. -/
 private def workerLoop (ch : CloseableChannel.Sync Span) (config : AsyncConfig)

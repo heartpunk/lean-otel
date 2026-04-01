@@ -196,6 +196,17 @@ def testExportToFile : IO Unit := do
   -- Clean up
   IO.FS.removeFile path
 
+def testExportBadEndpoint : IO Unit := do
+  IO.println "Export bad endpoint:"
+  let config : ExporterConfig := {
+    endpoint := "https://localhost:1"  -- nothing listening
+    apiKey := "fake"
+    resource := { serviceName := "test" }
+  }
+  let result ← exportSpans config #[testSpan]
+  assert "bad endpoint has error" result.error.isSome
+  assert "bad endpoint status 0" (result.statusCode == 0)
+
 def testHoneycombIntegration : IO Unit := do
   IO.println "Honeycomb integration:"
   let config : ExporterConfig := {
@@ -329,6 +340,7 @@ def main : IO UInt32 := do
     testIdGeneration
     testExportEmpty
     testExportToFile
+    testExportBadEndpoint
     testHoneycombIntegration
     testNowNanos
     testTracerWithSpan
