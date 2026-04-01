@@ -20,9 +20,29 @@ namespace LeanOtel
 /-- Global tracer reference, initialized to none. -/
 initialize globalTracerRef : IO.Ref (Option Tracer) ← IO.mkRef none
 
-/-- Set up the global tracer. Must be called before any traced function runs. -/
+/-- Parse W3C TRACEPARENT: "00-<traceId>-<parentSpanId>-<flags>" -/
+def parseTraceparent (s : String) : Option (String × String) :=
+  let parts := s.splitOn "-"
+  if parts.length == 4 then
+    let traceId := parts[1]!
+    let parentSpanId := parts[2]!
+    if traceId.length == 32 && parentSpanId.length == 16 then
+      some (traceId, parentSpanId)
+    else none
+  else none
+
+/-- Set up the global tracer. Reads TRACEPARENT from env for parent context.
+    Must be called before any traced function runs. -/
 def initGlobalTracer (config : BatchConfig) : IO Unit := do
-  let tracer ← Tracer.new config
+  let mut tracer ← Tracer.new config
+  -- Check for W3C TRACEPARENT propagation
+  match ← IO.getEnv "TRACEPARENT" with
+  | some tp =>
+    match parseTraceparent tp with
+    | some (traceId, parentSpanId) =>
+      tracer := { tracer with traceId, parentSpanId := some parentSpanId }
+    | none => IO.eprintln s!"lean-otel: invalid TRACEPARENT format: {tp}"
+  | none => pure ()
   globalTracerRef.set (some tracer)
 
 /-- Get the global tracer. Returns none if not initialized. -/

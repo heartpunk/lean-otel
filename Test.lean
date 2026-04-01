@@ -97,6 +97,17 @@ open LeanOtel
   let acc' := BatchAccum.recordDropped acc 5
   acc'.totalDropped == 5
 
+-- parseTraceparent
+open LeanOtel in
+#guard (parseTraceparent "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01" ==
+  some ("0af7651916cd43dd8448eb211c80319c", "b7ad6b7169203331"))
+
+open LeanOtel in
+#guard (parseTraceparent "garbage").isNone
+
+open LeanOtel in
+#guard (parseTraceparent "00-short-bad-01").isNone
+
 end BatchAccumTests
 
 /-! ## IO tests -/
