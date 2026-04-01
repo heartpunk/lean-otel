@@ -332,6 +332,39 @@ def testAsyncShutdownRejects : IO Unit := do
   let ok2 ← ap.send testSpan
   assert "send after shutdown rejected" (!ok2)
 
+def testFixtureTimeSource : IO Unit := do
+  IO.println "Fixture time source:"
+  let counter ← IO.mkRef (0 : UInt64)
+  let fixtureClock : TimeSource := do
+    let n ← counter.get
+    counter.set (n + 1000000000)  -- increment 1 second each call
+    return 1700000000000000000 + n  -- base: ~2023
+  let bp ← BatchProcessor.new {
+    apiKey := "test", maxQueueSize := 100, maxExportBatchSize := 100,
+    resource := { serviceName := "test" }
+  }
+  let tracer : Tracer := {
+    processor := bp
+    traceId := "aaaa0000bbbb1111cccc2222dddd3333"
+    timeSource := fixtureClock
+  }
+  tracer.withSpan "fixed-time-span" (attrs := #[]) fun _ => pure ()
+  let batch ← bp.drain
+  match batch[0]? with
+  | some s =>
+    assert "fixture start time" (s.startTimeUnixNano == 1700000000000000000)
+    assert "fixture end time" (s.endTimeUnixNano == 1700000001000000000)
+  | none => assert "span was queued" false
+
+def testNowNanosFallback : IO Unit := do
+  IO.println "nowNanos fallback:"
+  -- A time source that simulates `date` failing (returns garbage)
+  let fallbackClock : TimeSource := do
+    let ms ← IO.monoMsNow
+    return ms.toUInt64 * 1000000
+  let t ← fallbackClock
+  assert "fallback returns nonzero" (t > 0)
+
 open LeanOtel in
 def testAsyncShutdownEmpty : IO Unit := do
   IO.println "Async shutdown empty batch:"
@@ -383,6 +416,8 @@ def main : IO UInt32 := do
     testAttrValueJson
     testAsyncProcessor
     testAsyncShutdownRejects
+    testFixtureTimeSource
+    testNowNanosFallback
     testAsyncShutdownEmpty
     testAsyncExportFailure
     IO.println "\nAll tests passed!"

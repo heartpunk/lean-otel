@@ -28,8 +28,11 @@ def newTraceId : IO String := randomHex 16
 /-- Generate a span ID (8 bytes = 16 hex chars). -/
 def newSpanId : IO String := randomHex 8
 
-/-- Get current wall clock time in nanoseconds since Unix epoch. -/
-def nowNanos : IO UInt64 := do
+/-- Time source: returns nanoseconds since epoch. Injectable for testing. -/
+def TimeSource := IO UInt64
+
+/-- Default time source: wall clock via `date +%s%N`, monotonic fallback. -/
+def defaultTimeSource : TimeSource := do
   let out ← IO.Process.output { cmd := "date", args := #["+%s%N"] }
   match out.stdout.trimAscii.toString.toNat? with
   | some n => return n.toUInt64
@@ -38,11 +41,15 @@ def nowNanos : IO UInt64 := do
     let ms ← IO.monoMsNow
     return ms.toUInt64 * 1000000
 
+/-- Get current time using the default time source. -/
+def nowNanos : IO UInt64 := defaultTimeSource
+
 /-- Tracer: holds batch processor and current trace context. -/
 structure Tracer where
   processor : BatchProcessor
   traceId : String
   parentSpanId : Option String := none
+  timeSource : TimeSource := defaultTimeSource
 
 /-- Create a new tracer. Spans are queued and shipped on flush/stop. -/
 def Tracer.new (config : BatchConfig) : IO Tracer := do
@@ -55,10 +62,10 @@ def Tracer.withSpan (t : Tracer) (name : String)
     (attrs : Array Attribute := #[])
     (f : Tracer → IO α) : IO α := do
   let sid ← newSpanId
-  let start ← nowNanos
+  let start ← t.timeSource
   let childTracer := { t with parentSpanId := some sid }
   let result ← f childTracer
-  let stop ← nowNanos
+  let stop ← t.timeSource
   let span : Span := {
     traceId := t.traceId
     spanId := sid
