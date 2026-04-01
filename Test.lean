@@ -169,7 +169,7 @@ def testIdGeneration : IO Unit := do
 def testExportEmpty : IO Unit := do
   IO.println "Export empty spans:"
   let config : ExporterConfig := {
-    apiKey := "zoFbjFUA5ErGjhw9T2CtWC"
+    apiKey := ((← IO.getEnv "HONEYCOMB_API_KEY").getD "")
     resource := { serviceName := "lean-otel-test" }
   }
   let result ← exportSpans config #[]
@@ -210,7 +210,7 @@ def testExportBadEndpoint : IO Unit := do
 def testHoneycombIntegration : IO Unit := do
   IO.println "Honeycomb integration:"
   let config : ExporterConfig := {
-    apiKey := "zoFbjFUA5ErGjhw9T2CtWC"
+    apiKey := ((← IO.getEnv "HONEYCOMB_API_KEY").getD "")
     resource := { serviceName := "lean-otel-test" }
   }
   let result ← exportSpans config #[testSpan]
@@ -279,7 +279,7 @@ open LeanOtel in
 def testAsyncProcessor : IO Unit := do
   IO.println "Async processor:"
   let ap ← AsyncProcessor.new {
-    apiKey := "zoFbjFUA5ErGjhw9T2CtWC"
+    apiKey := ((← IO.getEnv "HONEYCOMB_API_KEY").getD "")
     maxQueueSize := 100
     maxExportBatchSize := 5
     scheduledDelayMs := 500
@@ -314,7 +314,7 @@ open LeanOtel in
 def testAsyncShutdownRejects : IO Unit := do
   IO.println "Async shutdown rejects:"
   let ap ← AsyncProcessor.new {
-    apiKey := "zoFbjFUA5ErGjhw9T2CtWC"
+    apiKey := ((← IO.getEnv "HONEYCOMB_API_KEY").getD "")
     maxQueueSize := 100
     maxExportBatchSize := 100
     scheduledDelayMs := 60000
@@ -369,7 +369,7 @@ open LeanOtel in
 def testAsyncShutdownEmpty : IO Unit := do
   IO.println "Async shutdown empty batch:"
   let ap ← AsyncProcessor.new {
-    apiKey := "zoFbjFUA5ErGjhw9T2CtWC"
+    apiKey := ((← IO.getEnv "HONEYCOMB_API_KEY").getD "")
     maxQueueSize := 100
     maxExportBatchSize := 100
     scheduledDelayMs := 60000
@@ -415,7 +415,7 @@ traced def tracedOuter : IO Nat := do
 def testTracedDef : IO Unit := do
   IO.println "traced def macro:"
   initGlobalTracer {
-    apiKey := "zoFbjFUA5ErGjhw9T2CtWC"
+    apiKey := ((← IO.getEnv "HONEYCOMB_API_KEY").getD "")
     maxQueueSize := 100
     maxExportBatchSize := 100
     resource := { serviceName := "lean-otel-test" }

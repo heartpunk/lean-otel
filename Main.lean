@@ -4,7 +4,7 @@ open LeanOtel
 
 def main : IO Unit := do
   let config : BatchConfig := {
-    apiKey := "zoFbjFUA5ErGjhw9T2CtWC"
+    apiKey := ((← IO.getEnv "HONEYCOMB_API_KEY").getD "")
     maxExportBatchSize := 10
     scheduledDelayMs := 1000
     resource := { serviceName := "lean-otel-test" }
