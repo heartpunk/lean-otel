@@ -94,4 +94,12 @@ scoped macro "traced " "+[" accepts:ident,* "] " "def " name:ident sig:optDeclSi
   let attrArray ← `(#[$[$attrElems],*])
   `(def $name $sig := withGlobalSpan $spanName (attrs := $attrArray) ($body))
 
+scoped macro "traced " "-[" rejects:ident,* "] " "def " name:ident sig:optDeclSig " := " body:term : command => do
+  let spanName := Lean.quote (toString name.getId)
+  let rejectNames := rejects.getElems.map (·.getId)
+  let paramNames := (getExplicitParams sig).filter (!rejectNames.contains ·)
+  let attrElems ← mkAttrElems paramNames
+  let attrArray ← `(#[$[$attrElems],*])
+  `(def $name $sig := withGlobalSpan $spanName (attrs := $attrArray) ($body))
+
 end LeanOtel
