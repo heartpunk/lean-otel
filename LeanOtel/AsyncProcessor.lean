@@ -132,7 +132,7 @@ def AsyncProcessor.new (config : AsyncConfig) : IO AsyncProcessor := do
   let ch ← CloseableChannel.new (some config.maxQueueSize)
   let statsRef ← IO.mkRef (BatchAccum.empty config.maxExportBatchSize)
   let syncCh := ch.sync
-  let task ← IO.asTask (workerLoop syncCh config statsRef)
+  let task ← IO.asTask (workerLoop syncCh config statsRef) (prio := Task.Priority.dedicated)
   return { channel := ch, config, workerTask := task, stats := statsRef }
 
 /-- Send a span to the processor. Non-blocking. Returns false if channel is closed. -/
