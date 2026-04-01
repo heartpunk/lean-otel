@@ -455,10 +455,8 @@ traced +[x] def tracedAcceptOnly (x y : Nat) : IO Nat := do
 
 def testTracedAcceptList : IO Unit := do
   IO.println "traced accept list:"
-  let apiKey := (← IO.getEnv "HONEYCOMB_API_KEY").getD ""
-  if apiKey.isEmpty then IO.println "  SKIP: no API key"; return
   initGlobalTracer {
-    apiKey, maxQueueSize := 100, maxExportBatchSize := 1, scheduledDelayMs := 500
+    apiKey := ((← IO.getEnv "HONEYCOMB_API_KEY").getD ""), maxQueueSize := 100, maxExportBatchSize := 1, scheduledDelayMs := 500
     resource := { serviceName := "lean-otel-test" }
   }
   let result ← tracedAcceptOnly 10 20
@@ -473,10 +471,8 @@ traced -[y] def tracedRejectY (x y z : Nat) : IO Nat := do
 
 def testTracedRejectList : IO Unit := do
   IO.println "traced reject list:"
-  let apiKey := (← IO.getEnv "HONEYCOMB_API_KEY").getD ""
-  if apiKey.isEmpty then IO.println "  SKIP: no API key"; return
   initGlobalTracer {
-    apiKey, maxQueueSize := 100, maxExportBatchSize := 1, scheduledDelayMs := 500
+    apiKey := ((← IO.getEnv "HONEYCOMB_API_KEY").getD ""), maxQueueSize := 100, maxExportBatchSize := 1, scheduledDelayMs := 500
     resource := { serviceName := "lean-otel-test" }
   }
   let result ← tracedRejectY 1 2 3
@@ -486,10 +482,8 @@ def testTracedRejectList : IO Unit := do
 
 def testTracedDef : IO Unit := do
   IO.println "traced def macro:"
-  let apiKey := (← IO.getEnv "HONEYCOMB_API_KEY").getD ""
-  if apiKey.isEmpty then IO.println "  SKIP: no API key"; return
   initGlobalTracer {
-    apiKey, maxQueueSize := 100, maxExportBatchSize := 1, scheduledDelayMs := 500
+    apiKey := ((← IO.getEnv "HONEYCOMB_API_KEY").getD ""), maxQueueSize := 100, maxExportBatchSize := 1, scheduledDelayMs := 500
     resource := { serviceName := "lean-otel-test" }
   }
   let result ← tracedOuter
@@ -503,7 +497,7 @@ def testNon401HttpError : IO Unit := do
   try IO.FS.removeFile logPath catch | _ => pure ()
   let config : ExporterConfig := {
     endpoint := "https://api.honeycomb.io/nonexistent"  -- will 404
-    apiKey := (← IO.getEnv "HONEYCOMB_API_KEY").getD ""
+    apiKey := ((← IO.getEnv "HONEYCOMB_API_KEY").getD "")
     resource := { serviceName := "lean-otel-test" }
     logSink := fileLogSink logPath
   }
@@ -526,9 +520,34 @@ def testGlobalTracerNotInitialized : IO Unit := do
   stopGlobalTracer
   assert "flush/stop don't crash when uninitialized" true
 
+open LeanOtel in
+def testAsyncTimerExport : IO Unit := do
+  IO.println "Async timer export (no shutdown):"
+  let ap ← AsyncProcessor.new {
+    apiKey := ((← IO.getEnv "HONEYCOMB_API_KEY").getD "")
+    maxQueueSize := 100
+    maxExportBatchSize := 100  -- large batch so it never fills
+    scheduledDelayMs := 500    -- short timer
+    resource := { serviceName := "lean-otel-test" }
+  }
+  -- Send a single span
+  let ok ← ap.send testSpan
+  assert "send accepted" ok
+  -- Wait well past the timer interval — span should be exported by timer alone
+  IO.sleep 2000
+  let stats ← ap.getStats
+  assert "timer exported 1 span (no shutdown needed)" (stats.totalExported == 1)
+  assert "batch empty after timer export" (stats.batch.isEmpty)
+  -- Now clean up
+  ap.shutdown
+
 def main : IO UInt32 := do
   IO.println "lean-otel test suite"
   IO.println "==================="
+  let apiKey := (← IO.getEnv "HONEYCOMB_API_KEY").getD ""
+  if apiKey.isEmpty then
+    IO.eprintln "FATAL: HONEYCOMB_API_KEY not set. Tests require a valid API key."
+    return 1
   try
     testQueueOps
     testIdGeneration
@@ -547,6 +566,7 @@ def main : IO UInt32 := do
     testTracedAcceptList
     testTracedRejectList
     testTracedDef
+    testAsyncTimerExport
     testAsyncShutdownEmpty
     testAsyncExportFailure
     testNon401HttpError

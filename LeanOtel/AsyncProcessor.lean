@@ -50,6 +50,11 @@ def BatchAccum.recordDropped (acc : BatchAccum) (n : Nat) : BatchAccum :=
 
 /-! ## IO shell: async processor -/
 
+/-- Messages sent to the worker via the shared channel. -/
+inductive WorkerMessage where
+  | span (s : Span)   -- a span to enqueue for export
+  | tick              -- timer fired, export batch if non-empty
+
 /-- Configuration for the async processor. -/
 structure AsyncConfig where
   maxQueueSize : Nat := 2048
@@ -62,9 +67,10 @@ deriving Repr
 
 /-- Async processor handle. -/
 structure AsyncProcessor where
-  channel : CloseableChannel Span
+  channel : CloseableChannel WorkerMessage
   config : AsyncConfig
   workerTask : Task (Except IO.Error Unit)
+  timerTask : Task (Except IO.Error Unit)
   stats : IO.Ref BatchAccum
 
 /-- Export a batch via libcurl. -/
@@ -82,14 +88,23 @@ private def doExport (config : AsyncConfig) (spans : Array Span) : IO Bool := do
     return false
   | none => return result.statusCode == 200
 
+/-- Timer loop: send tick messages to the worker channel at regular intervals. -/
+private def timerLoop (ch : CloseableChannel WorkerMessage) (intervalMs : UInt32) : IO Unit := do
+  while true do
+    IO.sleep intervalMs
+    let closed ← ch.isClosed
+    if closed then return
+    let sendTask ← ch.send .tick
+    match ← IO.wait sendTask with
+    | .ok () => pure ()
+    | .error _ => return  -- channel closed
+
 /-- Worker loop: read from channel, batch, export. -/
-private def workerLoop (ch : CloseableChannel.Sync Span) (config : AsyncConfig)
+private def workerLoop (ch : CloseableChannel.Sync WorkerMessage) (config : AsyncConfig)
     (statsRef : IO.Ref BatchAccum) : IO Unit := do
   let mut acc := BatchAccum.empty config.maxExportBatchSize
-  let mut lastExportMs ← IO.monoMsNow
 
   while true do
-    -- Try non-blocking recv first
     let item ← ch.recv
 
     match item with
@@ -102,28 +117,25 @@ private def workerLoop (ch : CloseableChannel.Sync Span) (config : AsyncConfig)
       statsRef.set acc
       return
 
-    | some span =>
+    | some (.span span) =>
       let (acc', shouldExport) := acc.add span
       acc := acc'
 
       if shouldExport then
-        -- Batch full: export now
         let (batch, acc') := acc.take
         let ok ← doExport config batch
         if ok then
           IO.eprintln s!"lean-otel: exported {batch.size} spans"
         acc := acc'
-        lastExportMs ← IO.monoMsNow
-      else
-        -- Check timer
-        let now ← IO.monoMsNow
-        if now - lastExportMs ≥ config.scheduledDelayMs.toNat && !acc.batch.isEmpty then
-          let (batch, acc') := acc.take
-          let ok ← doExport config batch
-          if ok then
-            IO.eprintln s!"lean-otel: timer export {batch.size} spans"
-          acc := acc'
-          lastExportMs ← IO.monoMsNow
+
+    | some .tick =>
+      -- Timer fired: export batch if non-empty
+      if !acc.batch.isEmpty then
+        let (batch, acc') := acc.take
+        let ok ← doExport config batch
+        if ok then
+          IO.eprintln s!"lean-otel: timer export {batch.size} spans"
+        acc := acc'
 
     statsRef.set acc
 
@@ -132,24 +144,26 @@ def AsyncProcessor.new (config : AsyncConfig) : IO AsyncProcessor := do
   let ch ← CloseableChannel.new (some config.maxQueueSize)
   let statsRef ← IO.mkRef (BatchAccum.empty config.maxExportBatchSize)
   let syncCh := ch.sync
-  let task ← IO.asTask (workerLoop syncCh config statsRef) (prio := Task.Priority.dedicated)
-  return { channel := ch, config, workerTask := task, stats := statsRef }
+  let worker ← IO.asTask (workerLoop syncCh config statsRef) (prio := Task.Priority.dedicated)
+  let timer ← IO.asTask (timerLoop ch config.scheduledDelayMs) (prio := Task.Priority.dedicated)
+  return { channel := ch, config, workerTask := worker, timerTask := timer, stats := statsRef }
 
 /-- Send a span to the processor. Non-blocking. Returns false if channel is closed. -/
 def AsyncProcessor.send (ap : AsyncProcessor) (span : Span) : IO Bool := do
   let closed ← ap.channel.isClosed
   if closed then return false
-  let sendTask ← ap.channel.send span
+  let sendTask ← ap.channel.send (.span span)
   match ← IO.wait sendTask with
   | .ok () => return true
   | .error _ => return false
 
-/-- Shut down: close channel, wait for worker to drain and exit. -/
+/-- Shut down: close channel, wait for worker and timer to exit. -/
 def AsyncProcessor.shutdown (ap : AsyncProcessor) : IO Unit := do
-  -- Close channel — worker will see `none` from recv and drain
+  -- Close channel — worker sees `none` from recv, timer sees closed
   try ap.channel.close catch | _ => pure ()
-  -- Wait for worker task to complete
+  -- Wait for both tasks to complete
   let _ ← IO.wait ap.workerTask
+  let _ ← IO.wait ap.timerTask
   return
 
 /-- Get export stats. -/
