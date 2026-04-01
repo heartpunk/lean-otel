@@ -206,6 +206,64 @@ def testHoneycombIntegration : IO Unit := do
   assert "Honeycomb returns 200" (result.statusCode == 200)
   assert "no error" result.error.isNone
 
+def testNowNanos : IO Unit := do
+  IO.println "nowNanos:"
+  let t ← nowNanos
+  -- Should be in the year 2026 range: ~1.77e18 nanos
+  assert "timestamp > 1.7e18" (t > 1700000000000000000)
+  assert "timestamp < 2.0e18" (t < 2000000000000000000)
+  -- Two calls should be monotonically increasing
+  let t2 ← nowNanos
+  assert "monotonic" (t2 ≥ t)
+
+def testTracerWithSpan : IO Unit := do
+  IO.println "Tracer.withSpan:"
+  let bp ← BatchProcessor.new {
+    apiKey := "test", maxQueueSize := 100, maxExportBatchSize := 100,
+    resource := { serviceName := "test" }
+  }
+  let tracer : Tracer := { processor := bp, traceId := "aaaa0000bbbb1111cccc2222dddd3333" }
+
+  -- withSpan should enqueue a span
+  tracer.withSpan "outer" (attrs := #[⟨"k", .str "v"⟩]) fun t => do
+    -- Nested span
+    t.withSpan "inner" (attrs := #[]) fun _ => do
+      pure ()
+
+  let (queued, _) ← tracer.stats
+  assert "2 spans queued (outer + inner)" (queued == 2)
+
+  -- Drain and check span names
+  let batch ← bp.drain
+  assert "batch has 2 spans" (batch.size == 2)
+  -- Inner span finishes first, so it's enqueued first
+  match batch[0]?, batch[1]? with
+  | some s0, some s1 =>
+    assert "first span is inner" (s0.name == "inner")
+    assert "second span is outer" (s1.name == "outer")
+    assert "inner has parent" s0.parentSpanId.isSome
+    assert "outer has no parent" s1.parentSpanId.isNone
+  | _, _ =>
+    assert "batch has 2 accessible spans" false
+
+def testAttrValueJson : IO Unit := do
+  IO.println "AttrValue JSON branches:"
+  let json_str := Span.toOtlpJson {
+    traceId := "t", spanId := "s", name := "n",
+    startTimeUnixNano := 0, endTimeUnixNano := 1,
+    attributes := #[
+      ⟨"s", .str "hello"⟩,
+      ⟨"i", .int 42⟩,
+      ⟨"f", .float 3.14⟩,
+      ⟨"b", .bool true⟩
+    ]
+  }
+  let s := json_str.compress
+  assert "str attr present" ((s.splitOn "stringValue").length > 1)
+  assert "int attr present" ((s.splitOn "intValue").length > 1)
+  assert "float attr present" ((s.splitOn "doubleValue").length > 1)
+  assert "bool attr present" ((s.splitOn "boolValue").length > 1)
+
 open LeanOtel in
 def testAsyncProcessor : IO Unit := do
   IO.println "Async processor:"
@@ -272,6 +330,9 @@ def main : IO UInt32 := do
     testExportEmpty
     testExportToFile
     testHoneycombIntegration
+    testNowNanos
+    testTracerWithSpan
+    testAttrValueJson
     testAsyncProcessor
     testAsyncShutdownRejects
     IO.println "\nAll tests passed!"
