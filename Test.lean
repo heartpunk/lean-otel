@@ -112,13 +112,16 @@ end BatchAccumTests
 
 /-! ## IO tests -/
 
-def testSpan : Span := {
-  traceId := "0af7651916cd43dd8448eb211c80319c"
-  spanId := "b7ad6b7169203331"
-  name := "test-span"
-  startTimeUnixNano := 1000000000
-  endTimeUnixNano := 2000000000
-}
+def mkTestSpan : IO Span := do
+  let tid ← newTraceId
+  let sid ← newSpanId
+  return {
+    traceId := tid
+    spanId := sid
+    name := "test-span"
+    startTimeUnixNano := 1000000000
+    endTimeUnixNano := 2000000000
+  }
 
 def assert (name : String) (cond : Bool) : IO Unit := do
   if cond then
@@ -135,15 +138,15 @@ def testQueueOps : IO Unit := do
   }
 
   -- Enqueue 3 spans (fills queue)
-  let ok1 ← bp.enqueue testSpan
-  let ok2 ← bp.enqueue testSpan
-  let ok3 ← bp.enqueue testSpan
+  let ok1 ← bp.enqueue (← mkTestSpan)
+  let ok2 ← bp.enqueue (← mkTestSpan)
+  let ok3 ← bp.enqueue (← mkTestSpan)
   assert "enqueue 1 accepted" ok1
   assert "enqueue 2 accepted" ok2
   assert "enqueue 3 accepted" ok3
 
   -- 4th should be rejected
-  let ok4 ← bp.enqueue testSpan
+  let ok4 ← bp.enqueue (← mkTestSpan)
   assert "enqueue 4 rejected (queue full)" (!ok4)
 
   -- Stats
@@ -194,14 +197,14 @@ def testExportToFile : IO Unit := do
   -- Clean up from prior runs
   try IO.FS.removeFile path catch | _ => pure ()
   let resource : Resource := { serviceName := "file-test" }
-  exportSpansToFile path resource #[testSpan]
+  exportSpansToFile path resource #[(← mkTestSpan)]
   let contents ← IO.FS.readFile path
   assert "file not empty" (!contents.isEmpty)
   -- Should be valid JSON (contains resourceSpans key)
   assert "contains resourceSpans" ((contents.splitOn "resourceSpans").length > 1)
   assert "contains test-span" ((contents.splitOn "test-span").length > 1)
   -- Write a second batch
-  exportSpansToFile path resource #[testSpan]
+  exportSpansToFile path resource #[(← mkTestSpan)]
   let contents2 ← IO.FS.readFile path
   assert "file grew (append)" (contents2.length > contents.length)
   -- Clean up
@@ -217,7 +220,7 @@ def testExportBadEndpoint : IO Unit := do
     resource := { serviceName := "test" }
     logSink := fileLogSink logPath
   }
-  let result ← exportSpans config #[testSpan]
+  let result ← exportSpans config #[(← mkTestSpan)]
   assert "bad endpoint has error" result.error.isSome
   assert "bad endpoint status 0" (result.statusCode == 0)
   let logContent ← IO.FS.readFile logPath
@@ -233,7 +236,7 @@ def testBadCredentials : IO Unit := do
     resource := { serviceName := "lean-otel-test" }
     logSink := fileLogSink logPath
   }
-  let result ← exportSpans config #[testSpan]
+  let result ← exportSpans config #[(← mkTestSpan)]
   assert "bad key returns 401" (result.statusCode == 401)
   assert "bad key no transport error" result.error.isNone
   assert "response body non-empty on 401" (!result.responseBody.isEmpty)
@@ -250,7 +253,7 @@ def testHoneycombIntegration : IO Unit := do
     apiKey := ((← IO.getEnv "HONEYCOMB_API_KEY").getD "")
     resource := { serviceName := "lean-otel-test" }
   }
-  let result ← exportSpans config #[testSpan]
+  let result ← exportSpans config #[(← mkTestSpan)]
   assert "Honeycomb returns 200" (result.statusCode == 200)
   assert "no error" result.error.isNone
 
@@ -324,10 +327,12 @@ def testAsyncProcessor : IO Unit := do
   }
 
   -- Send 7 spans — should trigger one batch export at 5
+  let tid ← newTraceId
   for i in List.range 7 do
+    let sid ← newSpanId
     let span : Span := {
-      traceId := "aaaa0000bbbb1111cccc2222dddd3333"
-      spanId := "eeee4444ffff5555"
+      traceId := tid
+      spanId := sid
       name := s!"async-test-span-{i}"
       startTimeUnixNano := 1000000000
       endTimeUnixNano := 2000000000
@@ -359,14 +364,14 @@ def testAsyncShutdownRejects : IO Unit := do
   }
 
   -- Send one span
-  let ok ← ap.send testSpan
+  let ok ← ap.send (← mkTestSpan)
   assert "send before shutdown accepted" ok
 
   -- Shutdown
   ap.shutdown
 
   -- Send after shutdown should be rejected
-  let ok2 ← ap.send testSpan
+  let ok2 ← ap.send (← mkTestSpan)
   assert "send after shutdown rejected" (!ok2)
 
 def testFixtureTimeSource : IO Unit := do
@@ -431,7 +436,7 @@ def testAsyncExportFailure : IO Unit := do
   }
   -- Send 3 spans — batch of 2 will trigger export with bad key
   for _ in List.range 3 do
-    let _ ← ap.send testSpan
+    let _ ← ap.send (← mkTestSpan)
   -- Wait for export attempt
   IO.sleep 500
   ap.shutdown
@@ -501,7 +506,7 @@ def testNon401HttpError : IO Unit := do
     resource := { serviceName := "lean-otel-test" }
     logSink := fileLogSink logPath
   }
-  let result ← exportSpans config #[testSpan]
+  let result ← exportSpans config #[(← mkTestSpan)]
   assert "non-401 error status ≥ 400" (result.statusCode ≥ 400)
   assert "non-401 error status ≠ 401" (result.statusCode != 401)
   let logContent ← IO.FS.readFile logPath
@@ -595,7 +600,7 @@ def testAsyncTimerExport : IO Unit := do
     resource := { serviceName := "lean-otel-test" }
   }
   -- Send a single span
-  let ok ← ap.send testSpan
+  let ok ← ap.send (← mkTestSpan)
   assert "send accepted" ok
   -- Wait well past the timer interval — span should be exported by timer alone
   IO.sleep 2000
