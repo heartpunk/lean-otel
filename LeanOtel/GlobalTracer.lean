@@ -73,9 +73,10 @@ def getGlobalTracer : IO (Option Tracer) :=
     Supports nesting: inner spans get the enclosing span as their parent.
     No-op if tracer not initialized. -/
 def withGlobalSpan (name : String) (attrs : Array Attribute := #[]) (f : IO α) : IO α := do
-  match ← getGlobalTracer with
+  let opt ← getGlobalTracer
+  IO.eprintln s!"lean-otel: withGlobalSpan '{name}' tracer={opt.isSome}"
+  match opt with
   | some t =>
-    IO.eprintln s!"lean-otel: withGlobalSpan '{name}'"
     let sid ← newSpanId
     -- Parent is top of span stack (enclosing span), or tracer's initial parent
     let stack ← globalSpanStackRef.get
