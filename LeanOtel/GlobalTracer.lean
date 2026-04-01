@@ -61,6 +61,12 @@ private def getExplicitParams (sig : TSyntax ``Parser.Command.optDeclSig) : Arra
     else acc
 
 open Lean in
+private def filterParams (paramNames : Array Name) (filter : Option (Array Name)) : Array Name :=
+  match filter with
+  | none => paramNames
+  | some accept => paramNames.filter (accept.contains ·)
+
+open Lean in
 private def mkAttrElems (paramNames : Array Name) : MacroM (Array (TSyntax `term)) :=
   paramNames.mapM fun pn => do
     let pnStr := Lean.quote (toString pn)
@@ -68,16 +74,22 @@ private def mkAttrElems (paramNames : Array Name) : MacroM (Array (TSyntax `term
     `(⟨$pnStr, .str (toString $pnIdent)⟩)
 
 open Lean in
-/-- `traced def f (x : Nat) (y : String) : IO T := body` desugars to
-    `def f (x : Nat) (y : String) : IO T := withGlobalSpan "f"
-       (attrs := #[⟨"x", .str (toString x)⟩, ⟨"y", .str (toString y)⟩]) body`
+/-- `traced def f (x : Nat) (y : String) : IO T := body`
+    Captures all explicit params as span attributes.
 
-    All explicit parameters with `ToString` instances are captured as span attributes.
-    TODO: accept/reject list for which args to serialize
-    TODO: value munging function -/
+    `traced +[x] def f (x y : Nat) : IO T := body`
+    Only captures `x`. -/
 scoped macro "traced " "def " name:ident sig:optDeclSig " := " body:term : command => do
   let spanName := Lean.quote (toString name.getId)
   let paramNames := getExplicitParams sig
+  let attrElems ← mkAttrElems paramNames
+  let attrArray ← `(#[$[$attrElems],*])
+  `(def $name $sig := withGlobalSpan $spanName (attrs := $attrArray) ($body))
+
+scoped macro "traced " "+[" accepts:ident,* "] " "def " name:ident sig:optDeclSig " := " body:term : command => do
+  let spanName := Lean.quote (toString name.getId)
+  let acceptNames := accepts.getElems.map (·.getId)
+  let paramNames := filterParams (getExplicitParams sig) (some acceptNames)
   let attrElems ← mkAttrElems paramNames
   let attrArray ← `(#[$[$attrElems],*])
   `(def $name $sig := withGlobalSpan $spanName (attrs := $attrArray) ($body))

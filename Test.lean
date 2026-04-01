@@ -438,6 +438,33 @@ traced def tracedOuter : IO Nat := do
   let b ← tracedAdd 3 4
   return a + b
 
+open LeanOtel in
+traced +[x] def tracedAcceptOnly (x y : Nat) : IO Nat := do
+  return x + y
+
+def testTracedAcceptList : IO Unit := do
+  IO.println "traced accept list:"
+  LeanOtel.globalTracerRef.set none
+  initGlobalTracer {
+    apiKey := (← IO.getEnv "HONEYCOMB_API_KEY").getD ""
+    maxQueueSize := 100
+    maxExportBatchSize := 100
+    resource := { serviceName := "lean-otel-test" }
+  }
+  let _ ← tracedAcceptOnly 10 20
+  match ← LeanOtel.getGlobalTracer with
+  | some t =>
+    let batch ← t.processor.drain
+    match batch[0]? with
+    | some s =>
+      let hasX := s.attributes.any (·.key == "x")
+      let hasY := s.attributes.any (·.key == "y")
+      assert "accept list: x captured" hasX
+      assert "accept list: y NOT captured" (!hasY)
+    | none => assert "span was queued" false
+  | none => assert "tracer initialized" false
+  stopGlobalTracer
+
 def testTracedDef : IO Unit := do
   IO.println "traced def macro:"
   initGlobalTracer {
@@ -523,6 +550,7 @@ def main : IO UInt32 := do
     testAsyncShutdownRejects
     testFixtureTimeSource
     testNowNanosFallback
+    testTracedAcceptList
     testTracedDef
     testAsyncShutdownEmpty
     testAsyncExportFailure
