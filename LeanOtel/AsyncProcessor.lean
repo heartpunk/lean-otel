@@ -90,14 +90,19 @@ private def doExport (config : AsyncConfig) (spans : Array Span) : IO Bool := do
 
 /-- Timer loop: send tick messages to the worker channel at regular intervals. -/
 private def timerLoop (ch : CloseableChannel WorkerMessage) (intervalMs : UInt32) : IO Unit := do
+  IO.eprintln s!"lean-otel: timer started (interval={intervalMs}ms)"
   while true do
     IO.sleep intervalMs
     let closed ← ch.isClosed
-    if closed then return
+    if closed then
+      IO.eprintln "lean-otel: timer exiting (channel closed)"
+      return
     let sendTask ← ch.send .tick
     match ← IO.wait sendTask with
     | .ok () => pure ()
-    | .error _ => return  -- channel closed
+    | .error _ =>
+      IO.eprintln "lean-otel: timer exiting (send failed)"
+      return  -- channel closed
 
 /-- Worker loop: read from channel, batch, export. -/
 private def workerLoop (ch : CloseableChannel.Sync WorkerMessage) (config : AsyncConfig)
@@ -118,6 +123,7 @@ private def workerLoop (ch : CloseableChannel.Sync WorkerMessage) (config : Asyn
       return
 
     | some (.span span) =>
+      IO.eprintln s!"lean-otel: worker received span '{span.name}'"
       let (acc', shouldExport) := acc.add span
       acc := acc'
 
