@@ -332,6 +332,42 @@ def testAsyncShutdownRejects : IO Unit := do
   let ok2 ← ap.send testSpan
   assert "send after shutdown rejected" (!ok2)
 
+open LeanOtel in
+def testAsyncShutdownEmpty : IO Unit := do
+  IO.println "Async shutdown empty batch:"
+  let ap ← AsyncProcessor.new {
+    apiKey := "zoFbjFUA5ErGjhw9T2CtWC"
+    maxQueueSize := 100
+    maxExportBatchSize := 100
+    scheduledDelayMs := 60000
+    resource := { serviceName := "lean-otel-test" }
+  }
+  -- Shutdown immediately with nothing queued
+  ap.shutdown
+  let stats ← ap.getStats
+  assert "empty shutdown: 0 exported" (stats.totalExported == 0)
+  assert "empty shutdown: 0 dropped" (stats.totalDropped == 0)
+
+open LeanOtel in
+def testAsyncExportFailure : IO Unit := do
+  IO.println "Async export failure:"
+  let ap ← AsyncProcessor.new {
+    apiKey := "fake-key-will-get-401"
+    maxQueueSize := 100
+    maxExportBatchSize := 2
+    scheduledDelayMs := 200
+    endpoint := "https://api.honeycomb.io"
+    resource := { serviceName := "lean-otel-test" }
+  }
+  -- Send 3 spans — batch of 2 will trigger export with bad key
+  for _ in List.range 3 do
+    let _ ← ap.send testSpan
+  -- Wait for export attempt
+  IO.sleep 500
+  ap.shutdown
+  -- Should not crash — error logged but processor stays alive
+  assert "survived export failure" true
+
 def main : IO UInt32 := do
   IO.println "lean-otel test suite"
   IO.println "==================="
@@ -347,6 +383,8 @@ def main : IO UInt32 := do
     testAttrValueJson
     testAsyncProcessor
     testAsyncShutdownRejects
+    testAsyncShutdownEmpty
+    testAsyncExportFailure
     IO.println "\nAll tests passed!"
     return 0
   catch e =>
