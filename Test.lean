@@ -401,6 +401,40 @@ def testAsyncExportFailure : IO Unit := do
   -- Should not crash — error logged but processor stays alive
   assert "survived export failure" true
 
+open LeanOtel in
+traced def tracedAdd (x y : Nat) : IO Nat := do
+  IO.sleep 10
+  return x + y
+
+open LeanOtel in
+traced def tracedOuter : IO Nat := do
+  let a ← tracedAdd 1 2
+  let b ← tracedAdd 3 4
+  return a + b
+
+def testTracedDef : IO Unit := do
+  IO.println "traced def macro:"
+  initGlobalTracer {
+    apiKey := "zoFbjFUA5ErGjhw9T2CtWC"
+    maxQueueSize := 100
+    maxExportBatchSize := 100
+    resource := { serviceName := "lean-otel-test" }
+  }
+
+  let result ← tracedOuter
+  assert "tracedOuter returns 10" (result == 10)
+
+  -- Check that spans were queued
+  match ← LeanOtel.getGlobalTracer with
+  | some t =>
+    let (queued, _) ← t.stats
+    -- tracedOuter + 2x tracedAdd = 3 spans
+    assert "3 spans from traced defs" (queued == 3)
+  | none => assert "global tracer initialized" false
+
+  flushGlobalTracer
+  stopGlobalTracer
+
 def main : IO UInt32 := do
   IO.println "lean-otel test suite"
   IO.println "==================="
@@ -418,6 +452,7 @@ def main : IO UInt32 := do
     testAsyncShutdownRejects
     testFixtureTimeSource
     testNowNanosFallback
+    testTracedDef
     testAsyncShutdownEmpty
     testAsyncExportFailure
     IO.println "\nAll tests passed!"

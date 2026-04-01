@@ -4,4 +4,5 @@ import LeanOtel.Export
 import LeanOtel.BatchProcessor
 import LeanOtel.Trace
 import LeanOtel.AsyncProcessor
+import LeanOtel.GlobalTracer
 import LeanOtel.Proofs
