@@ -36,7 +36,19 @@ traced def myFunction (n : Nat) : IO Nat := do
   return n + 1
 ```
 
-`traced def` desugars to `withGlobalSpan "funcName" (body)`. If the global tracer is not initialized, the function runs untraced.
+`traced def` desugars to `withGlobalSpan "funcName" (body)`. All explicit parameters with `ToString` are captured as span attributes. If the global tracer is not initialized, the function runs untraced.
+
+**Accept list** — only capture specific args:
+```lean
+traced +[x] def f (x y z : Nat) : IO Nat := do ...
+-- span attrs: x only
+```
+
+**Reject list** — capture all args except specific ones:
+```lean
+traced -[y] def f (x y z : Nat) : IO Nat := do ...
+-- span attrs: x, z (y excluded)
+```
 
 ## Manual spans
 
@@ -56,11 +68,11 @@ match ← getGlobalTracer with
 
 ## Tests
 
-57 tests. Compile-time `#guard` + IO tests: queue ops, ID gen, file export, Honeycomb integration, async lifecycle, error paths, `traced def` macro, injectable time source.
+76 tests. Compile-time `#guard` + IO tests: queue ops, ID gen, file export, Honeycomb integration, async lifecycle, error paths (401/404/transport), `traced def` macro (all args, accept list, reject list), injectable time source, log sink verification.
 
 ## Dependencies
 
-- [leanCurl](https://github.com/bergmannjg/leanCurl) (libcurl FFI; macOS: `brew reinstall curl`)
+- [leanCurl](https://github.com/heartpunk/leanCurl) (libcurl FFI; macOS: `brew reinstall curl`)
 - Lean 4.27.0
 
 ## License
