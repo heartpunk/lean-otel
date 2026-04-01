@@ -13,12 +13,16 @@
   If the global tracer is not initialized, the function runs without tracing (no-op).
 -/
 import LeanOtel.Trace
+import LeanOtel.AsyncProcessor
 import Lean.Elab.Command
 
 namespace LeanOtel
 
 /-- Global tracer reference, initialized to none. -/
 initialize globalTracerRef : IO.Ref (Option Tracer) ← IO.mkRef none
+
+/-- Global async processor for background export. -/
+initialize globalAsyncRef : IO.Ref (Option AsyncProcessor) ← IO.mkRef none
 
 /-- Parse W3C TRACEPARENT: "00-<traceId>-<parentSpanId>-<flags>" -/
 def parseTraceparent (s : String) : Option (String × String) :=
@@ -31,7 +35,8 @@ def parseTraceparent (s : String) : Option (String × String) :=
     else none
   else none
 
-/-- Set up the global tracer. Reads TRACEPARENT from env for parent context.
+/-- Set up the global tracer with async background export.
+    Reads TRACEPARENT from env for parent context.
     Must be called before any traced function runs. -/
 def initGlobalTracer (config : BatchConfig) : IO Unit := do
   let mut tracer ← Tracer.new config
@@ -44,29 +49,67 @@ def initGlobalTracer (config : BatchConfig) : IO Unit := do
     | none => IO.eprintln s!"lean-otel: invalid TRACEPARENT format: {tp}"
   | none => pure ()
   globalTracerRef.set (some tracer)
+  -- Start async processor for background export
+  let asyncConfig : AsyncConfig := {
+    apiKey := config.apiKey
+    endpoint := config.endpoint
+    resource := config.resource
+    maxQueueSize := config.maxQueueSize
+    maxExportBatchSize := config.maxExportBatchSize
+    scheduledDelayMs := config.scheduledDelayMs
+  }
+  let ap ← AsyncProcessor.new asyncConfig
+  globalAsyncRef.set (some ap)
 
 /-- Get the global tracer. Returns none if not initialized. -/
 def getGlobalTracer : IO (Option Tracer) :=
   globalTracerRef.get
 
-/-- Run an IO action with a span on the global tracer. No-op if tracer not initialized. -/
+/-- Run an IO action with a span on the global tracer. Spans are exported async.
+    No-op if tracer not initialized. -/
 def withGlobalSpan (name : String) (attrs : Array Attribute := #[]) (f : IO α) : IO α := do
   match ← getGlobalTracer with
   | some t =>
-    t.withSpan name (attrs := attrs) fun _ => f
+    let sid ← newSpanId
+    let start ← t.timeSource
+    let result ← f
+    let stop ← t.timeSource
+    let span : Span := {
+      traceId := t.traceId
+      spanId := sid
+      parentSpanId := t.parentSpanId
+      name := name
+      startTimeUnixNano := start
+      endTimeUnixNano := stop
+      attributes := attrs
+      status := .ok
+    }
+    -- Send to async processor for background export
+    match ← globalAsyncRef.get with
+    | some ap => let _ ← ap.send span
+    | none => let _ ← t.processor.enqueue span  -- fallback to sync
+    return result
   | none => f
 
 /-- Flush the global tracer. -/
 def flushGlobalTracer : IO Unit := do
-  match ← getGlobalTracer with
-  | some t => t.flush
-  | none => pure ()
+  match ← globalAsyncRef.get with
+  | some ap =>
+    -- Async processor flushes via shutdown/restart — just wait for background drain
+    IO.sleep 200
+  | none =>
+    match ← getGlobalTracer with
+    | some t => t.flush
+    | none => pure ()
 
-/-- Stop the global tracer. -/
+/-- Stop the global tracer and async processor. -/
 def stopGlobalTracer : IO Unit := do
-  match ← getGlobalTracer with
-  | some t => t.stop
-  | none => pure ()
+  match ← globalAsyncRef.get with
+  | some ap => ap.shutdown
+  | none =>
+    match ← getGlobalTracer with
+    | some t => t.stop
+    | none => pure ()
 
 open Lean Syntax in
 /-- Extract explicit parameter names from an optDeclSig's binders. -/
