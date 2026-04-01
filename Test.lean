@@ -476,6 +476,35 @@ def testTracedDef : IO Unit := do
 
   stopGlobalTracer
 
+def testNon401HttpError : IO Unit := do
+  IO.println "Non-401 HTTP error:"
+  let logPath : System.FilePath := "/tmp/lean-otel-test-http-error.log"
+  try IO.FS.removeFile logPath catch | _ => pure ()
+  let config : ExporterConfig := {
+    endpoint := "https://api.honeycomb.io/nonexistent"  -- will 404
+    apiKey := (← IO.getEnv "HONEYCOMB_API_KEY").getD ""
+    resource := { serviceName := "lean-otel-test" }
+    logSink := fileLogSink logPath
+  }
+  let result ← exportSpans config #[testSpan]
+  assert "non-401 error status ≥ 400" (result.statusCode ≥ 400)
+  assert "non-401 error status ≠ 401" (result.statusCode != 401)
+  let logContent ← IO.FS.readFile logPath
+  assert "non-401 error logged" ((logContent.splitOn "export failed with HTTP").length > 1)
+  IO.FS.removeFile logPath
+
+def testGlobalTracerNotInitialized : IO Unit := do
+  IO.println "Global tracer not initialized:"
+  -- Reset global tracer to none
+  LeanOtel.globalTracerRef.set none
+  -- withGlobalSpan should be a no-op, just runs the body
+  let result ← LeanOtel.withGlobalSpan "should-noop" (attrs := #[]) ((pure 42 : IO Nat))
+  assert "withGlobalSpan no-op returns body result" (result == 42)
+  -- flush/stop should be no-ops
+  flushGlobalTracer
+  stopGlobalTracer
+  assert "flush/stop don't crash when uninitialized" true
+
 def main : IO UInt32 := do
   IO.println "lean-otel test suite"
   IO.println "==================="
@@ -497,6 +526,8 @@ def main : IO UInt32 := do
     testTracedDef
     testAsyncShutdownEmpty
     testAsyncExportFailure
+    testNon401HttpError
+    testGlobalTracerNotInitialized
     IO.println "\nAll tests passed!"
     return 0
   catch e =>
