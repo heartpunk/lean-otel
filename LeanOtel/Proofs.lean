@@ -5,6 +5,7 @@ import LeanOtel.Span
 import LeanOtel.Json
 import LeanOtel.Trace
 import LeanOtel.BatchProcessor
+import LeanOtel.AsyncProcessor
 
 namespace LeanOtel
 
@@ -118,5 +119,15 @@ theorem drain_preserves_dropped (st : BatchState) (maxBatch : Nat) :
 theorem statusCode_unset : statusCodeToInt .unset = 0 := rfl
 theorem statusCode_ok : statusCodeToInt .ok = 1 := rfl
 theorem statusCode_error : statusCodeToInt .error = 2 := rfl
+
+/-- BatchAccum.add: batch grows by 1. -/
+theorem batchAccum_add_grows (acc : BatchAccum) (span : Span) :
+    (acc.add span).1.batch.size = acc.batch.size + 1 := by
+  simp [BatchAccum.add, Array.size_push]
+
+/-- BatchAccum.add: shouldExport iff batch reaches maxBatchSize. -/
+theorem batchAccum_add_shouldExport (acc : BatchAccum) (span : Span) :
+    (acc.add span).2 = ((acc.batch.size + 1) ≥ acc.maxBatchSize) := by
+  simp [BatchAccum.add, Array.size_push]
 
 end LeanOtel
