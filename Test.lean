@@ -521,6 +521,38 @@ def testGlobalTracerNotInitialized : IO Unit := do
   assert "flush/stop don't crash when uninitialized" true
 
 open LeanOtel in
+def testGlobalSpanNesting : IO Unit := do
+  IO.println "Global span nesting:"
+  -- Set up global tracer with sync path so we can inspect spans directly
+  let bp ← BatchProcessor.new {
+    apiKey := "test", maxQueueSize := 100, maxExportBatchSize := 100,
+    resource := { serviceName := "test" }
+  }
+  let tracer : Tracer := { processor := bp, traceId := "aaaa0000bbbb1111cccc2222dddd3333" }
+  globalTracerRef.set (some tracer)
+  globalAsyncRef.set none  -- force sync path
+  -- Nested withGlobalSpan calls
+  let outerResult ← withGlobalSpan "outer-global" (attrs := #[]) do
+    let innerResult ← withGlobalSpan "inner-global" (attrs := #[]) do
+      return (42 : Nat)
+    return innerResult + 1
+  assert "nested withGlobalSpan returns correct value" (outerResult == 43)
+  -- Drain and check parent-child relationship
+  let batch ← bp.drain
+  assert "2 global spans queued" (batch.size == 2)
+  -- Inner finishes first, so it's enqueued first
+  match batch[0]?, batch[1]? with
+  | some inner, some outer =>
+    assert "first span is inner-global" (inner.name == "inner-global")
+    assert "second span is outer-global" (outer.name == "outer-global")
+    assert "inner has parent span ID" inner.parentSpanId.isSome
+    assert "outer's spanId matches inner's parent" (inner.parentSpanId == some outer.spanId)
+  | _, _ =>
+    assert "batch has 2 accessible spans" false
+  -- Clean up
+  globalTracerRef.set none
+
+open LeanOtel in
 def testAsyncTimerExport : IO Unit := do
   IO.println "Async timer export (no shutdown):"
   let ap ← AsyncProcessor.new {
@@ -571,6 +603,7 @@ def main : IO UInt32 := do
     testAsyncExportFailure
     testNon401HttpError
     testGlobalTracerNotInitialized
+    testGlobalSpanNesting
     IO.println "\nAll tests passed!"
     try stopGlobalTracer catch | _ => pure ()
     return 0

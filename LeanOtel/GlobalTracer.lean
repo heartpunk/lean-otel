@@ -24,6 +24,9 @@ initialize globalTracerRef : IO.Ref (Option Tracer) ← IO.mkRef none
 /-- Global async processor for background export. -/
 initialize globalAsyncRef : IO.Ref (Option AsyncProcessor) ← IO.mkRef none
 
+/-- Current span stack for parent-child nesting in withGlobalSpan. -/
+initialize globalSpanStackRef : IO.Ref (Array String) ← IO.mkRef #[]
+
 /-- Parse W3C TRACEPARENT: "00-<traceId>-<parentSpanId>-<flags>" -/
 def parseTraceparent (s : String) : Option (String × String) :=
   let parts := s.splitOn "-"
@@ -67,19 +70,28 @@ def getGlobalTracer : IO (Option Tracer) :=
   globalTracerRef.get
 
 /-- Run an IO action with a span on the global tracer. Spans are exported async.
+    Supports nesting: inner spans get the enclosing span as their parent.
     No-op if tracer not initialized. -/
 def withGlobalSpan (name : String) (attrs : Array Attribute := #[]) (f : IO α) : IO α := do
   match ← getGlobalTracer with
   | some t =>
     IO.eprintln s!"lean-otel: withGlobalSpan '{name}'"
     let sid ← newSpanId
+    -- Parent is top of span stack (enclosing span), or tracer's initial parent
+    let stack ← globalSpanStackRef.get
+    let parentId := if stack.isEmpty then t.parentSpanId else some stack.back!
+    -- Push this span onto the stack
+    globalSpanStackRef.set (stack.push sid)
     let start ← t.timeSource
     let result ← f
     let stop ← t.timeSource
+    -- Pop this span from the stack
+    let stack' ← globalSpanStackRef.get
+    globalSpanStackRef.set stack'.pop
     let span : Span := {
       traceId := t.traceId
       spanId := sid
-      parentSpanId := t.parentSpanId
+      parentSpanId := parentId
       name := name
       startTimeUnixNano := start
       endTimeUnixNano := stop
