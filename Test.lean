@@ -166,6 +166,17 @@ def testIdGeneration : IO Unit := do
   let tid2 ← newTraceId
   assert "traceIds are unique" (tid != tid2)
 
+def testExportEmpty : IO Unit := do
+  IO.println "Export empty spans:"
+  let config : ExporterConfig := {
+    apiKey := "zoFbjFUA5ErGjhw9T2CtWC"
+    resource := { serviceName := "lean-otel-test" }
+  }
+  let result ← exportSpans config #[]
+  assert "empty export returns 0" (result.statusCode == 0)
+  assert "empty export no error" result.error.isNone
+  assert "empty export empty body" (result.responseBody == "")
+
 def testHoneycombIntegration : IO Unit := do
   IO.println "Honeycomb integration:"
   let config : ExporterConfig := {
@@ -239,6 +250,7 @@ def main : IO UInt32 := do
   try
     testQueueOps
     testIdGeneration
+    testExportEmpty
     testHoneycombIntegration
     testAsyncProcessor
     testAsyncShutdownRejects
