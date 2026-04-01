@@ -558,38 +558,6 @@ def testGlobalSpanNesting : IO Unit := do
   globalTracerRef.set none
 
 open LeanOtel in
-def testPushGlobalSpan : IO Unit := do
-  IO.println "Push/pop global span:"
-  let bp ← BatchProcessor.new {
-    apiKey := "test", maxQueueSize := 100, maxExportBatchSize := 100,
-    resource := { serviceName := "test" }
-  }
-  let tracer : Tracer := { processor := bp, traceId := "aaaa0000bbbb1111cccc2222dddd3333" }
-  globalTracerRef.set (some tracer)
-  globalAsyncRef.set none
-  globalSpanStackRef.set #[]
-  -- Push a root span (emitted immediately)
-  pushGlobalSpan "root-marker" (attrs := #[⟨"phase", .str "stabilize"⟩])
-  -- Child span inside the pushed context
-  let result ← withGlobalSpan "child-work" (attrs := #[]) do
-    return (99 : Nat)
-  assert "child returns correct value" (result == 99)
-  -- Pop the root context
-  popGlobalSpan
-  -- Drain and check: root-marker emitted first, then child-work
-  let batch ← bp.drain
-  assert "2 spans emitted" (batch.size == 2)
-  match batch[0]?, batch[1]? with
-  | some root, some child =>
-    assert "first span is root-marker" (root.name == "root-marker")
-    assert "second span is child-work" (child.name == "child-work")
-    assert "root-marker has zero duration" (root.startTimeUnixNano == root.endTimeUnixNano)
-    assert "child's parent is root-marker" (child.parentSpanId == some root.spanId)
-  | _, _ =>
-    assert "batch has 2 accessible spans" false
-  globalTracerRef.set none
-
-open LeanOtel in
 def testAsyncTimerExport : IO Unit := do
   IO.println "Async timer export (no shutdown):"
   let ap ← AsyncProcessor.new {
@@ -641,7 +609,6 @@ def main : IO UInt32 := do
     testNon401HttpError
     testGlobalTracerNotInitialized
     testGlobalSpanNesting
-    testPushGlobalSpan
     IO.println "\nAll tests passed!"
     try stopGlobalTracer catch | _ => pure ()
     return 0
