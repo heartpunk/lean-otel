@@ -106,6 +106,38 @@ def withGlobalSpan (name : String) (attrs : Array Attribute := #[]) (f : IO α) 
     return result
   | none => f
 
+/-- Emit a span immediately and push it as the current parent context.
+    Use this for long-running operations where the "root" span would never
+    complete before child spans are exported. Call `popGlobalSpan` when done. -/
+def pushGlobalSpan (name : String) (attrs : Array Attribute := #[]) : IO Unit := do
+  match ← getGlobalTracer with
+  | some t =>
+    let sid ← newSpanId
+    let stack ← globalSpanStackRef.get
+    let parentId := if stack.isEmpty then t.parentSpanId else some stack.back!
+    globalSpanStackRef.set (stack.push sid)
+    let now ← t.timeSource
+    let span : Span := {
+      traceId := t.traceId
+      spanId := sid
+      parentSpanId := parentId
+      name := name
+      startTimeUnixNano := now
+      endTimeUnixNano := now  -- zero-duration marker span
+      attributes := attrs
+      status := .ok
+    }
+    match ← globalAsyncRef.get with
+    | some ap => let _ ← ap.send span
+    | none => let _ ← t.processor.enqueue span
+  | none => pure ()
+
+/-- Pop the current span context pushed by `pushGlobalSpan`. -/
+def popGlobalSpan : IO Unit := do
+  let stack ← globalSpanStackRef.get
+  unless stack.isEmpty do
+    globalSpanStackRef.set stack.pop
+
 /-- Flush the global tracer. -/
 def flushGlobalTracer : IO Unit := do
   match ← globalAsyncRef.get with
