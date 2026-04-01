@@ -39,6 +39,7 @@ def parseTraceparent (s : String) : Option (String × String) :=
     Reads TRACEPARENT from env for parent context.
     Must be called before any traced function runs. -/
 def initGlobalTracer (config : BatchConfig) : IO Unit := do
+  IO.eprintln s!"lean-otel: initGlobalTracer called, apiKey length={config.apiKey.length}"
   let mut tracer ← Tracer.new config
   -- Check for W3C TRACEPARENT propagation
   match ← IO.getEnv "TRACEPARENT" with
@@ -70,6 +71,7 @@ def getGlobalTracer : IO (Option Tracer) :=
 def withGlobalSpan (name : String) (attrs : Array Attribute := #[]) (f : IO α) : IO α := do
   match ← getGlobalTracer with
   | some t =>
+    IO.eprintln s!"lean-otel: withGlobalSpan '{name}'"
     let sid ← newSpanId
     let start ← t.timeSource
     let result ← f
