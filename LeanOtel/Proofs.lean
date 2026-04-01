@@ -130,4 +130,19 @@ theorem batchAccum_add_shouldExport (acc : BatchAccum) (span : Span) :
     (acc.add span).2 = ((acc.batch.size + 1) ≥ acc.maxBatchSize) := by
   simp [BatchAccum.add, Array.size_push]
 
+/-- BatchAccum.take: returns the current batch. -/
+theorem batchAccum_take_returns_batch (acc : BatchAccum) :
+    (acc.take).1 = acc.batch := by
+  simp [BatchAccum.take]
+
+/-- BatchAccum.take: resets batch to empty. -/
+theorem batchAccum_take_empties (acc : BatchAccum) :
+    (acc.take).2.batch = #[] := by
+  simp [BatchAccum.take]
+
+/-- BatchAccum.take: totalExported increases by batch size. -/
+theorem batchAccum_take_exports (acc : BatchAccum) :
+    (acc.take).2.totalExported = acc.totalExported + acc.batch.size := by
+  simp [BatchAccum.take]
+
 end LeanOtel
