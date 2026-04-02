@@ -20,6 +20,7 @@ structure BatchConfig where
   endpoint : String := "https://api.honeycomb.io"
   apiKey : String
   resource : Resource
+  emitOnStart : Bool := false
 deriving Repr
 
 /-- Internal state of the batch processor. -/

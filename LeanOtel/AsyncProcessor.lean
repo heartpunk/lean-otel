@@ -63,6 +63,7 @@ structure AsyncConfig where
   endpoint : String := "https://api.honeycomb.io"
   apiKey : String
   resource : Resource
+  emitOnStart : Bool := false
 deriving Repr
 
 /-- Async processor handle. -/

@@ -69,6 +69,7 @@ def initGlobalTracer (configs : Array BatchConfig) : IO Unit := do
       maxQueueSize := config.maxQueueSize
       maxExportBatchSize := config.maxExportBatchSize
       scheduledDelayMs := config.scheduledDelayMs
+      emitOnStart := config.emitOnStart
     }
     let ap ← AsyncProcessor.new asyncConfig
     IO.eprintln s!"lean-otel: exporter started → {config.endpoint}"
@@ -98,6 +99,22 @@ def withGlobalSpan (name : String) (attrs : Array Attribute := #[]) (f : IO α) 
     -- Push this span onto the stack
     globalSpanStackRef.set (stack.push sid)
     let start ← t.timeSource
+    -- Emit partial span (endTime=0) to emitOnStart processors
+    let processors ← globalAsyncRef.get
+    unless processors.isEmpty do
+      let startSpan : Span := {
+        traceId := t.traceId
+        spanId := sid
+        parentSpanId := parentId
+        name := name
+        startTimeUnixNano := start
+        endTimeUnixNano := 0
+        attributes := attrs
+        status := .unset
+      }
+      for ap in processors do
+        if ap.config.emitOnStart then
+          let _ ← ap.send startSpan
     let result ← f
     let stop ← t.timeSource
     -- Pop this span from the stack
