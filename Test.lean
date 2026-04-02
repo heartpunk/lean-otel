@@ -460,7 +460,7 @@ traced +[x] def tracedAcceptOnly (x y : Nat) : IO Nat := do
 
 def testTracedAcceptList : IO Unit := do
   IO.println "traced accept list:"
-  initGlobalTracer {
+  initGlobalTracerSingle {
     apiKey := ((← IO.getEnv "HONEYCOMB_API_KEY").getD ""), maxQueueSize := 100, maxExportBatchSize := 1, scheduledDelayMs := 500
     resource := { serviceName := "lean-otel-test" }
   }
@@ -476,7 +476,7 @@ traced -[y] def tracedRejectY (x y z : Nat) : IO Nat := do
 
 def testTracedRejectList : IO Unit := do
   IO.println "traced reject list:"
-  initGlobalTracer {
+  initGlobalTracerSingle {
     apiKey := ((← IO.getEnv "HONEYCOMB_API_KEY").getD ""), maxQueueSize := 100, maxExportBatchSize := 1, scheduledDelayMs := 500
     resource := { serviceName := "lean-otel-test" }
   }
@@ -487,7 +487,7 @@ def testTracedRejectList : IO Unit := do
 
 def testTracedDef : IO Unit := do
   IO.println "traced def macro:"
-  initGlobalTracer {
+  initGlobalTracerSingle {
     apiKey := ((← IO.getEnv "HONEYCOMB_API_KEY").getD ""), maxQueueSize := 100, maxExportBatchSize := 1, scheduledDelayMs := 500
     resource := { serviceName := "lean-otel-test" }
   }
@@ -535,7 +535,7 @@ def testGlobalSpanNesting : IO Unit := do
   }
   let tracer : Tracer := { processor := bp, traceId := "aaaa0000bbbb1111cccc2222dddd3333" }
   globalTracerRef.set (some tracer)
-  globalAsyncRef.set none  -- force sync path
+  globalAsyncRef.set #[]  -- force sync path
   -- Nested withGlobalSpan calls
   let outerResult ← withGlobalSpan "outer-global" (attrs := #[]) do
     let innerResult ← withGlobalSpan "inner-global" (attrs := #[]) do
@@ -578,6 +578,51 @@ def testAsyncTimerExport : IO Unit := do
   -- Now clean up
   ap.shutdown
 
+open LeanOtel in
+def testMultiExport : IO Unit := do
+  IO.println "Multi-export (Honeycomb + SPARQL proxy):"
+  let proxyEndpoint := (← IO.getEnv "OTEL_PROXY_ENDPOINT").getD ""
+  if proxyEndpoint.isEmpty then
+    IO.println "  SKIP: OTEL_PROXY_ENDPOINT not set"
+    return
+  let sparqlEndpoint := (← IO.getEnv "SPARQL_ENDPOINT").getD ""
+  if sparqlEndpoint.isEmpty then
+    IO.println "  SKIP: SPARQL_ENDPOINT not set"
+    return
+  let apiKey := (← IO.getEnv "HONEYCOMB_API_KEY").getD ""
+  let honeycombConfig : BatchConfig := {
+    apiKey, maxQueueSize := 100, maxExportBatchSize := 10, scheduledDelayMs := 500
+    resource := { serviceName := "lean-otel-multi-test" }
+  }
+  let proxyConfig : BatchConfig := {
+    apiKey := ""  -- proxy doesn't need an API key
+    endpoint := proxyEndpoint
+    maxQueueSize := 100, maxExportBatchSize := 10, scheduledDelayMs := 500
+    resource := { serviceName := "lean-otel-multi-test" }
+  }
+  initGlobalTracer #[honeycombConfig, proxyConfig]
+  -- Send nested spans
+  let result ← withGlobalSpan "multi-root" (attrs := #[⟨"test", .str "multi-export"⟩]) do
+    let r ← withGlobalSpan "multi-child" (attrs := #[]) do
+      return (42 : Nat)
+    return r
+  assert "multi-export returns correct value" (result == 42)
+  -- Wait for async export to both endpoints
+  IO.sleep 2000
+  stopGlobalTracer
+  -- Verify spans landed in SPARQL engine by querying it
+  let queryCmd ← IO.Process.output {
+    cmd := "curl"
+    args := #["-s", "-X", "POST", sparqlEndpoint,
+              "-H", "Content-Type: application/sparql-query",
+              "-d", "SELECT ?name WHERE { ?s <http://opentelemetry.io/ontology#name> ?name . ?s <http://opentelemetry.io/ontology#serviceName> \"lean-otel-multi-test\" }"]
+  }
+  let body := queryCmd.stdout
+  assert "SPARQL query succeeded" (queryCmd.exitCode == 0)
+  assert "multi-root span in SPARQL store" ((body.splitOn "multi-root").length > 1)
+  assert "multi-child span in SPARQL store" ((body.splitOn "multi-child").length > 1)
+  IO.println s!"  SPARQL response: {body.take 200}"
+
 def main : IO UInt32 := do
   IO.println "lean-otel test suite"
   IO.println "==================="
@@ -609,6 +654,7 @@ def main : IO UInt32 := do
     testNon401HttpError
     testGlobalTracerNotInitialized
     testGlobalSpanNesting
+    testMultiExport
     IO.println "\nAll tests passed!"
     try stopGlobalTracer catch | _ => pure ()
     return 0

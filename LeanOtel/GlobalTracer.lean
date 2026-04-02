@@ -21,8 +21,8 @@ namespace LeanOtel
 /-- Global tracer reference, initialized to none. -/
 initialize globalTracerRef : IO.Ref (Option Tracer) ← IO.mkRef none
 
-/-- Global async processor for background export. -/
-initialize globalAsyncRef : IO.Ref (Option AsyncProcessor) ← IO.mkRef none
+/-- Global async processors for background export (one per exporter endpoint). -/
+initialize globalAsyncRef : IO.Ref (Array AsyncProcessor) ← IO.mkRef #[]
 
 /-- Current span stack for parent-child nesting in withGlobalSpan. -/
 initialize globalSpanStackRef : IO.Ref (Array String) ← IO.mkRef #[]
@@ -38,12 +38,18 @@ def parseTraceparent (s : String) : Option (String × String) :=
     else none
   else none
 
-/-- Set up the global tracer with async background export.
+/-- Set up the global tracer with one or more async exporters.
     Reads TRACEPARENT from env for parent context.
+    Each config gets its own independent AsyncProcessor.
     Must be called before any traced function runs. -/
-def initGlobalTracer (config : BatchConfig) : IO Unit := do
-  IO.eprintln s!"lean-otel: initGlobalTracer called, apiKey length={config.apiKey.length}"
-  let mut tracer ← Tracer.new config
+def initGlobalTracer (configs : Array BatchConfig) : IO Unit := do
+  match configs[0]? with
+  | none =>
+    IO.eprintln "lean-otel: initGlobalTracer called with no configs"
+    return
+  | some firstConfig =>
+  IO.eprintln s!"lean-otel: initGlobalTracer called, {configs.size} exporter(s)"
+  let mut tracer ← Tracer.new firstConfig
   -- Check for W3C TRACEPARENT propagation
   match ← IO.getEnv "TRACEPARENT" with
   | some tp =>
@@ -53,17 +59,25 @@ def initGlobalTracer (config : BatchConfig) : IO Unit := do
     | none => IO.eprintln s!"lean-otel: invalid TRACEPARENT format: {tp}"
   | none => pure ()
   globalTracerRef.set (some tracer)
-  -- Start async processor for background export
-  let asyncConfig : AsyncConfig := {
-    apiKey := config.apiKey
-    endpoint := config.endpoint
-    resource := config.resource
-    maxQueueSize := config.maxQueueSize
-    maxExportBatchSize := config.maxExportBatchSize
-    scheduledDelayMs := config.scheduledDelayMs
-  }
-  let ap ← AsyncProcessor.new asyncConfig
-  globalAsyncRef.set (some ap)
+  -- Start one async processor per config
+  let mut processors : Array AsyncProcessor := #[]
+  for config in configs do
+    let asyncConfig : AsyncConfig := {
+      apiKey := config.apiKey
+      endpoint := config.endpoint
+      resource := config.resource
+      maxQueueSize := config.maxQueueSize
+      maxExportBatchSize := config.maxExportBatchSize
+      scheduledDelayMs := config.scheduledDelayMs
+    }
+    let ap ← AsyncProcessor.new asyncConfig
+    IO.eprintln s!"lean-otel: exporter started → {config.endpoint}"
+    processors := processors.push ap
+  globalAsyncRef.set processors
+
+/-- Convenience: single-exporter init. -/
+def initGlobalTracerSingle (config : BatchConfig) : IO Unit :=
+  initGlobalTracer #[config]
 
 /-- Get the global tracer. Returns none if not initialized. -/
 def getGlobalTracer : IO (Option Tracer) :=
@@ -99,32 +113,37 @@ def withGlobalSpan (name : String) (attrs : Array Attribute := #[]) (f : IO α) 
       attributes := attrs
       status := .ok
     }
-    -- Send to async processor for background export
-    match ← globalAsyncRef.get with
-    | some ap => let _ ← ap.send span
-    | none => let _ ← t.processor.enqueue span  -- fallback to sync
+    -- Send to all async processors (best-effort per exporter)
+    let processors ← globalAsyncRef.get
+    if processors.isEmpty then
+      let _ ← t.processor.enqueue span  -- fallback to sync
+    else
+      for ap in processors do
+        let _ ← ap.send span
     return result
   | none => f
 
 /-- Flush the global tracer. -/
 def flushGlobalTracer : IO Unit := do
-  match ← globalAsyncRef.get with
-  | some ap =>
-    -- Async processor flushes via shutdown/restart — just wait for background drain
-    IO.sleep 200
-  | none =>
+  let processors ← globalAsyncRef.get
+  if processors.isEmpty then
     match ← getGlobalTracer with
     | some t => t.flush
     | none => pure ()
+  else
+    -- Async processors flush via shutdown/restart — just wait for background drain
+    IO.sleep 200
 
-/-- Stop the global tracer and async processor. -/
+/-- Stop the global tracer and all async processors. -/
 def stopGlobalTracer : IO Unit := do
-  match ← globalAsyncRef.get with
-  | some ap => ap.shutdown
-  | none =>
+  let processors ← globalAsyncRef.get
+  if processors.isEmpty then
     match ← getGlobalTracer with
     | some t => t.stop
     | none => pure ()
+  else
+    for ap in processors do
+      ap.shutdown
 
 open Lean Syntax in
 /-- Extract explicit parameter names from an optDeclSig's binders. -/
